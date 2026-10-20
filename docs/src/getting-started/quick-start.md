@@ -87,7 +87,7 @@ data: {"input":{"name":"World"},"greeting":"Hello, World!"}
 
 ## Try It Interactively
 
-> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
+> Open the [Full Debugger UI](/dataflow-rs/debugger/) for step-by-step execution and workflow visualization.
 
 <div class="playground-widget" data-workflows='[{"id":"greeting","name":"Greeting","tasks":[{"id":"load","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"greet","name":"Create Greeting","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.input.name"},"!"]}}]}}}]}]' data-payload='{"name":"World"}'>
 </div>
@@ -194,12 +194,12 @@ assert!(message.context().get(&"data.greeting".parse().unwrap()).is_none());
 # }
 ```
 
-The `load` task is required. The payload is not part of the JSONLogic
-evaluation context, so `{"var": "data.name"}` would resolve to nothing and the
-validation rule would fail on every message. It fails silently, because an
-unresolved path is falsy. `parse_json` copies the payload to `data.input`, so
-every path here reads `data.input.…`. `Compiler::check` reports a literal
-`var` rooted at `payload` as a `PAYLOAD_VAR` defect, for the same reason.
+The `load` task is required because `payload` is outside the JSONLogic
+evaluation context. Without `parse_json`, `{"var": "data.name"}` resolves to
+`null` (which is falsy) and the validation rule fails on every message.
+`parse_json` copies the payload to `data.input`, so tasks read `data.input.…`.
+`Compiler::check` flags any literal `var` rooted at `payload` as a
+`PAYLOAD_VAR` defect.
 
 ## Next Steps
 

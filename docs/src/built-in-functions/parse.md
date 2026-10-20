@@ -1,10 +1,9 @@
 # Parse Functions
 
-`parse_json` and `parse_xml` bring input into the context. A workflow
-typically starts with one of them, because the payload is not part of the
-JSONLogic evaluation context: an expression reads `data`, `metadata` and
-`temp_data`, and nothing else. The parse functions are the only built-ins
-that read the payload.
+`parse_json` and `parse_xml` load input data into the context. Workflows
+start with one of these functions because `payload` sits outside the JSONLogic
+evaluation context (`data`, `metadata`, and `temp_data`). `parse_json` and
+`parse_xml` are the only built-in functions that read `payload`.
 
 Both take the same two parameters:
 
@@ -167,21 +166,19 @@ shows a whole document, since that is what the source holds:
 | `<root><z>1</z><a>2</a><m>3</m></root>` | `{"z": {"$text": "1"}, "a": {"$text": "2"}, "m": {"$text": "3"}}` |
 | `<root><item>a</item><item>b</item></root>` | `{"item": {"$text": "b"}}` |
 
-Four consequences to plan for before writing the mappings that read the
-result:
+Keep four rules in mind when reading the parsed XML:
 
-- **A leaf is an object, not a string.** The path to Alice's name is
-  `data.request.name.$text`. A condition comparing `data.request.name` to
-  `"Alice"` is false, since the value there is `{"$text": "Alice"}`.
-- **Every value is a string.** `<age>30</age>` gives `{"$text": "30"}`. XML
-  carries no types; compare against `"30"` or convert.
-- **Elements keep document order, in every build.** The keys of the sixth
-  row come out as `z`, `a`, `m`, however the build's `serde_json` is
-  configured. 3.x's default build sorted them.
-- **A repeated element does not become an array.** It keeps its first
-  position and its last value, so the last row drops `a`. For a document with
-  repeated elements, parse it in a [host function](./host-functions.md) that
-  controls its own XML reader.
+- **Leaf elements become objects, not strings.** The path to Alice's name is
+  `data.request.name.$text`. Comparing `data.request.name` to `"Alice"`
+  evaluates to `false` because `data.request.name` holds `{"$text": "Alice"}`.
+- **All text and attribute values are strings.** `<age>30</age>` produces
+  `{"$text": "30"}`. Compare against `"30"` or convert the value.
+- **Elements preserve document order** across all builds (`z`, `a`, `m` in the
+  sixth row).
+- **Repeated sibling elements overwrite earlier ones.** A repeated tag keeps
+  its first key position and last value, so the final row drops `"a"`. To
+  parse repeated XML elements into arrays, register a
+  [host function](./host-functions.md) with a custom XML parser.
 
 ### Example
 

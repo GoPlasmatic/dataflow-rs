@@ -278,7 +278,7 @@ For a regex, write a [host function](./host-functions.md) and run it in Rust.
 
 ## Try It
 
-> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
+> Open the [Full Debugger UI](/dataflow-rs/debugger/) for step-by-step execution and workflow visualization.
 
 <div class="playground-widget" data-workflows='[{"id":"validation_demo","name":"Validation Demo","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"check","name":"Validate","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.email"}]},"message":"Email is required"},{"logic":{">":[{"var":"data.input.age"},0]},"message":"Age must be positive"},{"logic":{"in":[{"var":"data.input.status"},["active","pending","suspended"]]},"message":"Invalid status"}]}}}]}]' data-payload='{"name":"John","age":0,"status":"unknown"}'>
 </div>

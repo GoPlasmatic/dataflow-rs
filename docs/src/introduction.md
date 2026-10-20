@@ -12,7 +12,7 @@
   [![Crates.io](https://img.shields.io/crates/v/dataflow-rs.svg)](https://crates.io/crates/dataflow-rs)
 </div>
 
-**Dataflow-rs** is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. A definition is parsed and linted once, compiled into a program, and run over messages; every JSONLogic expression is compiled at build time, and a run reads the clock once.
+**Dataflow-rs** is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. The builder parses, lints, and compiles each definition into a program at build time, and each run reads the clock once.
 
 Use it to route events, validate data, power REST APIs, or build automation pipelines.
 
@@ -20,16 +20,16 @@ Use it to route events, validate data, power REST APIs, or build automation pipe
 
 Dataflow-rs targets high-throughput hot paths:
 
-*   **Every expression is compiled at build time.** A workflow that does not compile is rejected before any message runs; a constant expression is evaluated once and kept.
-*   **One context view per run.** The built-ins run inline over one view of the message's context, and a host function reads that same view and writes to an overlay of its own, so no view is built per call.
-*   **One clock read per run.** `metadata.processed_at`, every audit entry and every error record carry that one reading. The clock is read again only for an observer or a trace that asks for timings.
-*   **No tracing cost unless asked for.** With no observer, trace or error context attached, a call takes the plain recorder.
+*   **Compile at build time.** The compiler validates workflows before any message runs and evaluates constant expressions once.
+*   **One context view per run.** Built-in functions run inline over a single view of the message context, while host functions read that view and write to a per-call overlay.
+*   **One clock read per run.** `metadata.processed_at`, audit entries, and error records share one timestamp. The engine reads the clock again only when an observer or trace requests timings.
+*   **Zero-cost when unwatched.** Without an observer, trace, or error context, calls use the plain recorder.
 
-See [Performance](./advanced/performance.md) for the benchmarks and how to run them.
+See [Performance](./advanced/performance.md) for benchmark results and commands.
 
 ### 🧩 Why Choose dataflow-rs?
 
-If you need dynamic business rules or user-customizable workflows, writing hardcoded `if/else` checks makes your codebase rigid, while running heavy workflow orchestrators (like Temporal or Zeebe) adds infrastructure dependencies and milliseconds of database/network latency. Dataflow-rs sits between the two:
+Dynamic business rules and user-customizable workflows outgrow hardcoded `if/else` checks, while distributed workflow orchestrators (like Temporal or Zeebe) add infrastructure dependencies and network latency. Dataflow-rs sits between the two:
 
 | Feature | Hardcoded Rust | dataflow-rs | Orchestrators (Temporal/Zeebe) |
 |---|---|---|---|
@@ -69,7 +69,7 @@ If you need dynamic business rules or user-customizable workflows, writing hardc
 
 Run dataflow-rs in your browser. Define a workflow and message, then see the processing result.
 
-> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution, breakpoints, and workflow visualization.
+> Open the [Full Debugger UI](/dataflow-rs/debugger/) for step-by-step execution and workflow visualization.
 
 <div class="playground-widget" data-workflows='[{"id":"transform","name":"Transform","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"map_data","name":"Map Data","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.input.name"},"!"]}},{"path":"data.processed","logic":true}]}}}]}]' data-payload='{"name":"World"}'>
 </div>

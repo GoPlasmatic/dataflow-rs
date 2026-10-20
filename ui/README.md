@@ -109,7 +109,7 @@ interface DebugConfig {
 
 ### Debug Mode
 
-Debug mode runs the message through an engine and steps through the trace. The engine's module must be instantiated **once** before anything runs, and before a trace is rendered: `defaultEngineFactory` builds a `WasmEngineAdapter` over `@goplasmatic/dataflow-wasm`, and the debugger replays every trace through that package's `contexts`, with a custom engine too. Withhold `engineFactory` until the default export resolves; until then the run button is disabled:
+Debug mode runs a message through an engine and steps through the trace. Call `initWasm()` once before running a workflow or replaying a trace. `defaultEngineFactory` wraps `@goplasmatic/dataflow-wasm` in a `WasmEngineAdapter`, and the debugger replays traces through that package's `TraceReplay` even when you supply a custom engine. Pass `undefined` for `engineFactory` until `initWasm()` resolves so the run button stays disabled until initialization finishes:
 
 ```tsx
 import { useEffect, useState } from 'react';

@@ -12,11 +12,10 @@ Dataflow-rs follows an IFTTT-style rules engine pattern:
 
 ## Architecture Overview
 
-Dataflow-rs has two phases:
+Dataflow-rs operates in two phases:
 
-1. **Build** - A definition is parsed and linted, every expression and
-   function config is compiled, and the workflows are linked into a program
-2. **Run** - The engine runs messages over the compiled program
+1. **Build** - `def::parse` parses and lints definitions, `Compiler` compiles expressions and function configs, and `link` builds an immutable `Program`
+2. **Run** - `Engine` executes messages against the compiled program
 
 ```text
 ┌──────────────────────────────────────────────────────────────────┐
@@ -175,10 +174,10 @@ for workflow in run.workflows() {
 
 ## Data Flow
 
-1. **Input** - A message is created with a payload
-2. **Workflow Selection** - The engine evaluates each active workflow's condition, in priority order
-3. **Task Execution** - Tasks run in order within each matching workflow
-4. **Output** - The message holds the transformed context, its audit trail and its errors; the `Run` says how it ended
+1. **Input** - You create a message with a payload
+2. **Workflow Selection** - The engine evaluates active workflow conditions in priority order
+3. **Task Execution** - Tasks run in sequence within each matching workflow
+4. **Output** - The message holds the updated context, audit trail, and error records; `Run` reports the final status
 
 ```text
 Message (input)

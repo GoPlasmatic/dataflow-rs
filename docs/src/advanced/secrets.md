@@ -1,22 +1,19 @@
 # Secrets
 
-A workflow sometimes needs a value the engine must never record: a signing
-key, a partner token, a webhook secret. This page covers the one place such a
-value can live.
+Workflows often need sensitive values that must never appear in messages,
+audit entries, or traces, such as signing keys, partner tokens, and webhook
+secrets. Store these values in the engine's `Secrets` store and read them with
+the `{"secret": "name"}` operator.
 
-## The problem
+## Why Context Roots Cannot Hold Secrets
 
-A message's context is one object, `{data, metadata, temp_data}`, and it
-plays two roles at once. Every expression evaluates against it, and it is
-also what the engine records: `Serialize for Message` writes it, a trace
-starts from it and records every change to it, and every audit entry holds
-the values a task wrote.
-
-So "what a workflow may read" and "what the engine records" are the same
-decision. For almost every value that is right. For a signing key it is
-wrong, and nothing inside the context can say so. `TraceOptions::redact`
-masks named paths in a trace *after* the fact, which is the tool you reach
-for when a value should not have been there in the first place.
+A message's context (`{data, metadata, temp_data}`) is both the evaluation
+input for JSONLogic and the recorded output of a run: `Serialize for Message`
+writes it out, traces start from it and record every change to it, and audit
+entries store the values tasks write. Any secret placed in the context will end
+up in serialized messages and traces. `TraceOptions::redact` masks paths in a
+trace, but keeping secrets out of the message altogether prevents accidental
+exposure across every output channel.
 
 ## The store
 
@@ -253,31 +250,30 @@ business.
 
 ## Unknown names
 
-A literal name the engine does not declare is refused at build, so a typo
-surfaces before the first message. Nothing that was working can break, since
-the name never resolved. A dynamic name that resolves to nothing fails at
-evaluation: a condition evaluates `false`, a `validation` rule records an
-error, a host function's `Ctx::eval` returns `Err`. It is never `null`:
-silently signing with an empty key is worse than an error.
+The compiler rejects any literal secret name that is missing from the store at
+build time (`UNKNOWN_SECRET`), catching typos before any message runs. A
+dynamic secret name that fails to resolve produces an evaluation error:
+conditions evaluate to `false`, `validation` rules record an error, and
+`Ctx::eval` in a host function returns `Err`. Missing secrets never resolve to
+`null`.
 
-Error text names the key, never a value.
+Error messages include only the secret key name, never its value.
 
-## Limits, stated plainly
+## Boundaries and Limitations
 
-- **Static, not taint.** The check refuses expressions the engine itself
-  records. A function can still leak; see the contract above.
-- **Other operators' errors.** A datalogic operator that fails may echo its
-  operands in the message (the `datetime` family does). Do not feed a secret
-  to an operator whose failure formats its input; the `secret` operator's own
-  errors never do.
-- **In-process memory is trusted.** A value is copied into the evaluation
-  arena when read and is not zeroized afterwards.
-- **One store per expression engine, fixed when it is built.** A registry and
-  every program compiled from it share it, and a reload through
-  `engine.compiler()` keeps it. Rotation is a new `ExprEngine`, a new
-  `Registry`, and a recompile of the definitions.
-- **`secret` is a reserved operator name.** Registering a host operator under
-  it fails `ExprEngineBuilder::build`; otherwise adding a store later would
-  silently shadow it. `ExprEngine::operators` lists it on every engine, with
-  or without a store, so `{"secret": "x"}` on an engine with no store is an
-  error, never literal data.
+- **Static checks only.** The compiler blocks secret reads in expressions that
+  the engine records directly. Host functions must still avoid writing
+  secret-derived values into the message.
+- **Other operators' error messages.** Some `datalogic-rs` operators (such as
+  `datetime`) include operand values when formatting evaluation errors. Do not
+  pass secrets into operators that echo their inputs on failure.
+- **In-process memory is trusted.** The evaluator copies resolved secrets into
+  its arena during evaluation and does not zeroize arena memory afterward.
+- **One store per `ExprEngine`.** Every workflow compiled from a `Registry`
+  shares its `ExprEngine` and secret store, including across reloads via
+  `engine.compiler()`. To rotate secrets, build a new `ExprEngine` and
+  `Registry` and recompile the definitions.
+- **`secret` is a reserved operator name.** `ExprEngineBuilder::build` rejects
+  custom operators named `secret`. `ExprEngine::operators` lists `secret` on
+  every engine, so `{"secret": "x"}` on an engine without a configured store
+  returns an evaluation error rather than passing through as literal data.

@@ -1,8 +1,7 @@
 # Publish Functions
 
 `publish_json` and `publish_xml` serialize a value under `data` into a string
-under `data`. A workflow typically calls one last, to prepare the text it
-sends on.
+under `data`. Workflows use them as a final step to format output payloads.
 
 Both share one config:
 

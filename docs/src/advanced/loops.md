@@ -1,9 +1,9 @@
 # Loops
 
-By default a workflow runs its task list exactly once. Adding a `loop` field
-turns that single pass into a bounded `for` loop: the engine repeats the task
-list once per counter value, so a set of tasks can run per array item, a fixed
-number of times, or until a condition on the message goes false.
+A workflow runs its task list once by default. Adding a `loop` field repeats
+the task list as a bounded `for` loop: the engine runs the tasks once per
+counter value, per array item, for a fixed count, or until the workflow
+condition evaluates to `false`.
 
 ```json
 {
@@ -27,21 +27,21 @@ number of times, or until a condition on the message goes false.
 | `as` | no | none | `temp_data` field holding the current element of `over`. Requires `over`. |
 | `scratch` | no | none | `temp_data` field reset to `{}` at the start of every sweep. |
 
-`max` has no default on purpose. It makes termination structural: a loop stops
-because of its bound, not because a condition was written correctly.
-`init: 0, max: n` yields counter values `0..n-1`, exactly the array indices.
-The defaults are `def::defaults::INIT` and `def::defaults::INCREMENT`.
+`max` is required so every loop has an explicit upper bound. `init: 0, max: n`
+produces counter values `0..n-1`, matching zero-based array indices. The
+default constants live at `def::defaults::INIT` and
+`def::defaults::INCREMENT`.
 
-## What happens per sweep
+## Execution Order per Sweep
 
-One iteration of the loop is called a *sweep*. Per sweep the engine:
+Each iteration of the loop is a *sweep*. On every sweep, the engine:
 
 ```text
 1. writes the counter to temp_data (if `counter` names it)
 2. checks `counter < max`              -> stop if not
 3. checks the run's deadline and token -> stop the run if either passed
 4. re-evaluates the workflow condition -> stop if false
-5. runs the whole task list, exactly as a non-looping workflow would
+5. runs the task list in sequence
 6. adds `increment` to the counter
 ```
 

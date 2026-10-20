@@ -265,30 +265,29 @@ assert!(error.is_retryable());
 assert!(matches!(error.kind(), ErrorKind::Service { .. }));
 ```
 
-Three things this buys you:
+Key behaviors:
 
-- **The code is passed through verbatim** (not upper-cased) as the record's
-  `code`, so the string you switch on is the string you wrote. An empty code
-  falls back to `TASK_ERROR`.
-- **`retryable` is declared, not inferred.** Only a timeout is retryable
-  unless told otherwise. The engine never retries a task on its own, but a
-  stop's retryability is what `Run::retryable()` reports, so a host's retry
-  loop depends on you declaring it correctly.
-- **The source is kept.** `with_source` attaches the cause for
-  `std::error::Error::source`; `wrap(context)` prefixes the message and keeps
-  the kind, the retryability and the source.
+- **The engine preserves your `code` string** (without changing its case) as
+  the record's `code`, so you can match on the same string you wrote. An empty
+  code falls back to `TASK_ERROR`.
+- **You declare `retryable` explicitly.** Only timeouts default to retryable.
+  The engine does not retry tasks on its own, and `Run::retryable()` reports
+  the flag you set on the stopping error.
+- **`with_source` preserves the underlying error** for
+  `std::error::Error::source`, while `wrap(context)` prefixes the message and
+  retains the kind, retryability, and source.
 
-`Display` renders the message alone, so `to_string()` is safe to hand to a
-caller. The built-ins record `VALIDATION_ERROR`, `EVALUATION_ERROR` and
-`MAPPING_ERROR` themselves; every other code in the list above comes from the engine's
-classification of a call's result.
+`Display` renders the message text on its own, making `to_string()` safe to
+return to callers. Built-in functions record `VALIDATION_ERROR`,
+`EVALUATION_ERROR`, and `MAPPING_ERROR`; the remaining codes come from the
+engine's outcome classification.
 
-## Branching on Why a Task Failed
+## Branching on Task Failures
 
-`message.errors()` is host-side only: the JSONLogic evaluation context is
-exactly `{data, metadata, temp_data}`, so `{"var": "errors"}` resolves to
-nothing. To let a workflow branch on *why* a step failed, point the engine at
-a context path:
+`message.errors()` is available only on the host side. Because the JSONLogic
+evaluation context contains `{data, metadata, temp_data}`, `{"var": "errors"}`
+resolves to `null`. Configure an `ErrorContext` path to let workflows branch on
+why a step failed:
 
 ```rust
 use dataflow_rs::run::{EngineConfig, ErrorContext};
@@ -356,42 +355,36 @@ assert_eq!(serde_json::to_string(routed).unwrap(), r#""rejected""#);
 # Ok(()) }
 ```
 
-### What is recorded
+### Recorded Fields
 
-Coverage matches `errors()`: a function returning `Err`, a task returning a
-`5xx` outcome, each failing rule of the `validation` built-in, and anything a
-function adds through `Ctx::record_error`. A task returning `Outcome::Skip`
-opts out of the per-task record entirely: no audit entry, no
-`metadata.progress` write, no record.
+`ErrorContext` mirrors the same events as `message.errors()`: a function
+returning `Err`, a task returning a `5xx` outcome, each failing rule in
+`validation`, and any record added via `Ctx::record_error`. A task returning
+`Outcome::Skip` writes no audit entry, no `metadata.progress`, and no error
+record.
 
-`status` is the task's own status: `500` when the function returned `Err`,
-otherwise the status the outcome carried (`400` for `validation`, `200` for a
-function that recorded an error and still succeeded).
-`metadata.progress.status_code` carries the same value.
+`status` holds the task's status code: `500` when the function returned `Err`,
+or the outcome's status (`400` for `validation`, `200` for a function that
+recorded an error and returned `Ok`). `metadata.progress.status_code` holds
+the same value.
 
-The engine does **not** record the error `message`. This value lands in the
-message's context, which is serialized straight back to callers; read the
-message from `message.errors()` host-side instead. This applies to
-`temp_data` too: it is part of the context and ships on the wire like
-everything else, so it is not private scratch space.
+The mirrored record omits the error `message` string because callers receive
+the serialized context; read full error messages from `message.errors()` on the
+host side.
 
-### Practical notes
+### Path Rules
 
-- **The path is reset at run start.** The engine removes the key before any
-  workflow runs, so a message never brings records in, and the key is
-  **absent**, not `[]`, when nothing failed.
-- The engine keeps at most 32 records by default
-  (`ErrorContext::DEFAULT_LIMIT`), newest retained; the limit must be at least
-  1. The bound keeps the cost independent of a looping workflow's iteration
-  count.
-- **The engine owns the configured path.** It replaces a non-array found
-  there, and anything but an object on the way to it. `ErrorContext::new`
-  refuses a bare root (`data`, `metadata` or `temp_data`) and any path at or
-  below the `metadata` slots the engine writes itself: `progress`,
-  `processed_at`, `engine_version` and `channel`.
-- The append is engine bookkeeping, not a task mutation: the task's audit
-  entry does not record it as a `Change`. A trace does, so a replay rebuilds
-  the context.
+- **The engine resets the path at run start.** If no task fails during the run,
+  the key remains absent rather than `[]`.
+- **The engine caps retained records** at 32 by default
+  (`ErrorContext::DEFAULT_LIMIT`), keeping the newest entries. The limit must
+  be at least 1, which bounds memory in looping workflows.
+- **The engine owns the configured path** and overwrites any non-array value at
+  that location. `ErrorContext::new` rejects bare roots (`data`, `metadata`,
+  `temp_data`) and reserved `metadata` paths (`progress`, `processed_at`,
+  `engine_version`, `channel`).
+- **Mirrored records do not appear in task audit `Change` lists**, though traces
+  record them so trace replay reconstructs the context.
 
 ## Error Types
 
@@ -534,7 +527,7 @@ stops the workflow at the failed validation. See
 
 ## Try It
 
-> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
+> Open the [Full Debugger UI](/dataflow-rs/debugger/) for step-by-step execution and workflow visualization.
 
 <div class="playground-widget" data-workflows='[{"id":"error_demo","name":"Error Demo","on_failure":"continue","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"validate_email","name":"Validate Email","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.email"}]},"message":"Email is required"}]}}},{"id":"greet","name":"Greet User","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.input.name"},"!"]}}]}}}]}]' data-payload='{"name":"John"}'>
 </div>

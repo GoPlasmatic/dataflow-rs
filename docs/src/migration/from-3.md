@@ -17,7 +17,7 @@ rewrite as a `V3_SPELLING` Advisory at the key the author typed. Nothing
 else happens to a definition: the engine runs the rewritten form, and the
 spelling in the store is the author's business.
 
-### The spellings
+### Spellings
 
 | 3.x | 4.0 | Reported as |
 |---|---|---|
@@ -25,20 +25,20 @@ spelling in the store is the author's business.
 | `continue_on_error` and `halt_on` on a task | `on_failure` and `on_rejection`, by the table below | `V3_SPELLING` Advisory |
 | `validate` as a function name | `validation` | `V3_SPELLING` Advisory |
 | An unknown key on a workflow, task or group, such as the UI's `path` | Moved into that node's `ext`, so `path` becomes `ext.path` | `UNKNOWN_KEY` Advisory |
-| An unknown key that is a near miss of a known one, such as `conditon` | Moved into `ext` the same way | `LIKELY_TYPO` Defect |
-| An unknown key inside `loop`, `for_each` or `rollout` | The owning node's `ext`, as `loop.<key>` | The same two |
-| An unknown key inside a built-in's input, or inside a `map` mapping or a `validation` rule | The task's `ext`, named by its path, such as `function.input.mappings[0].note` | The same two |
-| `continue_on_error` on a group | The group's `ext` | `GROUP_CONTINUE_ON_ERROR` Advisory, as in 3.x, and still never honoured |
-| A timestamp spelled `2024-01-01 00:00:00 UTC` | Read as 3.x read it; written as RFC 3339 | Nothing |
+| An unknown key within edit distance of a known key, such as `conditon` | Moved into `ext` | `LIKELY_TYPO` Defect |
+| An unknown key inside `loop`, `for_each` or `rollout` | The owning node's `ext`, as `loop.<key>` | `UNKNOWN_KEY` or `LIKELY_TYPO` |
+| An unknown key inside a built-in's input, or inside a `map` mapping or a `validation` rule | The task's `ext`, named by its path, such as `function.input.mappings[0].note` | `UNKNOWN_KEY` or `LIKELY_TYPO` |
+| `continue_on_error` on a group | The group's `ext` | `GROUP_CONTINUE_ON_ERROR` Advisory |
+| A timestamp spelled `2024-01-01 00:00:00 UTC` | Read as in 3.x; written as RFC 3339 | Nothing |
 
-A near miss is an edit distance of 1 for keys of up to five characters and
-2 for longer ones, against the known keys at that level. It is a Defect
-because a misspelled key used to load silently with its feature off.
+A key counts as a near miss at an edit distance of 1 for keys up to five
+characters and 2 for longer keys. The parser reports it as a Defect so typos do
+not go unnoticed.
 
-### The policy mapping
+### Policy Mapping
 
-3.x had two task flags; 4.0 has two policies, `on_failure` for a 5xx or an
-`Err` and `on_rejection` for a 4xx. The four combinations map exactly:
+3.x used two task flags (`continue_on_error` and `halt_on`); 4.0 uses two
+policies (`on_failure` for a 5xx or `Err`, and `on_rejection` for a 4xx):
 
 | 3.x task flags | 4.0 task policies | Behaviour |
 |---|---|---|
@@ -49,14 +49,12 @@ because a misspelled key used to load silently with its feature off.
 | `terminal: true` | `terminal: true` | Unchanged: applied after the policy, so a failure still propagates |
 | Workflow `continue_on_error: false` / `true` | Workflow `on_failure: fail` / `continue` | `continue` ends this workflow (in a loop, this sweep) and the next one runs |
 
-`halt_on: "never"` and `continue_on_error: false` spell the defaults; they
-are rewritten to nothing and still reported.
+`halt_on: "never"` and `continue_on_error: false` match the default policies
+and are removed during migration while still reporting `V3_SPELLING`.
 
-**Mixing the spellings on one node is refused.** A task or workflow that
-carries a 3.x policy key (`continue_on_error`, `halt_on`) beside a 4.0 one
-(`on_failure`, `on_rejection`) is `MIXED_SPELLING` at the 3.x key. 3.x ignored
-the 4.0 keys, so a stray one must not change a migrated definition's policy
-silently.
+**Do not mix 3.x and 4.0 policy keys on the same node.** A task or workflow
+containing both a 3.x key (`continue_on_error`, `halt_on`) and a 4.0 key
+(`on_failure`, `on_rejection`) fails with `MIXED_SPELLING` at the 3.x key.
 
 ### Storing the 4.0 spelling
 
@@ -665,15 +663,14 @@ every status, so a host that showed snapshots replays instead.
 ### Messages, on the wire
 
 The message JSON is unchanged: `{id, payload, context, audit_trail,
-errors}`, the audit entry and the error record with the same keys in the
-same order, and every message 4.0 writes reads back byte for byte. Three
-things are refused on read: a context with a key besides `data`, `metadata`
-and `temp_data`, a context that is not an object, or a root named twice; a
-root that is not an object; and an object anywhere in the message holding a
-key twice, which no message 3.x wrote holds. 3.x's `map` could write a fourth key for a path
-outside the roots, or replace a root with a scalar; a stored message that
-carries either no longer reads. A `null` `metadata` used to drop every write
-under it silently, `metadata.progress` included.
+errors}`, with audit entries and error records keeping the same keys in the
+same order, and every message 4.0 writes reads back byte for byte. Deserializing
+a `Message` rejects: a context with a key besides `data`, `metadata`, and
+`temp_data`, a non-object context, or a duplicate root key; a non-object root;
+and any object in the message containing duplicate keys. In 3.x, `map` could
+write a fourth key for a path outside the three roots or replace a root with a
+scalar, and a `null` `metadata` root dropped writes under it, including
+`metadata.progress`. Stored messages with those shapes no longer deserialize.
 
 ```rust
 use dataflow_rs::Message;

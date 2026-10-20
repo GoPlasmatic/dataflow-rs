@@ -24,8 +24,10 @@ document. It returns the same definition and ordered issues as `parse`.
 `EngineBuilder::workflow_json_owned(value)` uses this path too; the borrowed
 `parse` and `workflow_json` methods remain available.
 
-`parse` never fails. It returns a `Parsed` whose `issues` lists every
-problem and whose `def` is `Some` exactly when none of them is Rejected:
+`def::parse` reads one definition into a `WorkflowDef` and lints its structure,
+unknown keys, and 3.x spellings. `parse` always returns a `Parsed` struct containing
+all discovered `issues`, and sets `def` to `Some` when no issue has `Rejected`
+severity:
 
 ```rust
 use dataflow_rs::def::{ParseOptions, parse};

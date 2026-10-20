@@ -84,15 +84,14 @@ audit trail and a list of errors.
 ## Key Design Principles
 
 ### Compile Once
-Every JSONLogic expression and every function config is compiled when the
-program is built. A malformed definition fails the build with its issues,
-never the first message, and a constant expression is evaluated once and kept.
+The compiler validates JSONLogic expressions and function configs when building
+the program. Invalid definitions fail the build with structured issues, and
+constant expressions fold once at compile time.
 
 ### Immutability
-A program is immutable once linked. An engine is an `Arc` around its program
-and config, so cloning one is cheap and clones share everything; a reload is a
-new engine (`Engine::with_program`), and the old one keeps serving the runs in
-flight.
+A linked `Program` is immutable. `Engine` wraps its program and config in an
+`Arc`, so clones share state without copying. Reloading creates a new engine via
+`Engine::with_program` while existing runs finish on the previous instance.
 
 ### Separation of Concerns
 - **`def`** parses and lints definitions into plain data (`WorkflowDef`)

@@ -445,17 +445,16 @@ rewritten form.
 
 ## Operator availability
 
-This package is built with `datetime` and `ExprEngineBuilder::all_operators`,
-so every optional operator family (`ExtString`, `ExtArray`, `ExtObject`,
-`ExtMath`, `ExtControl`, `ErrorHandling` and `Datetime`) is live in the browser.
-`Tensor` is not included: its operator names (`shape`, `cast`, `concat`) are
-ordinary JSON keys in workflows that already ship.
+This package compiles with `datetime` and `ExprEngineBuilder::all_operators`,
+enabling `ExtString`, `ExtArray`, `ExtObject`, `ExtMath`, `ExtControl`,
+`ErrorHandling`, and `Datetime` in the browser. `Tensor` is excluded because
+its operator names (`shape`, `cast`, `concat`) collide with common JSON keys.
 
-A default `ExprEngine::default()` in Rust enables **none** of them. Because the
-engine evaluates in templating mode, an operator whose family is off is not an
-error: it passes through as literal data. An expression using `length` or
-`switch` therefore works in the browser and is silently inert on a default Rust
-`ExprEngine` unless its family is enabled on `ExprEngineBuilder`. See
+In Rust, `ExprEngine::default()` enables only core JSONLogic. Because the
+engine evaluates in templating mode, disabled operators pass through as literal
+objects rather than returning an error. Enable the matching families on
+`ExprEngineBuilder` in your Rust service so expressions using operators like
+`length` or `switch` evaluate the same way in both environments. See
 [JSONLogic](../advanced/jsonlogic.md#operator-families).
 
 ## Building from Source

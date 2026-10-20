@@ -66,16 +66,13 @@ Access fields with:
 ```
 
 The message's **payload is not in the context**. `{"var": "payload.x"}`
-resolves to nothing, silently, on every message; parse the payload into
-`data` first (the `parse_json` function does). `Compiler::check` reports a
-literal `payload` read as `PAYLOAD_VAR`, a defect, so the mistake is caught
-at authoring time rather than found in production.
+resolves to `null` on every message; parse the payload into `data` first using
+`parse_json`. `Compiler::check` reports any literal `payload` read as a
+`PAYLOAD_VAR` defect so you catch it at authoring time.
 
-Values the engine must never record (signing keys, partner tokens) are
-deliberately not in this tree either. They live in a store on the
-expression engine and are read with the reserved operator
-`{"secret": "name"}`; see [Secrets](./secrets.md) for where that is allowed
-and what it guarantees.
+Secrets such as signing keys and partner tokens also stay outside the context
+tree so the engine never records them. Store secrets on the expression engine
+and read them with `{"secret": "name"}`; see [Secrets](./secrets.md).
 
 ## Comparison Operators
 
@@ -256,7 +253,7 @@ skips their bodies for that reason.
 
 ## Try It
 
-> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
+> Open the [Full Debugger UI](/dataflow-rs/debugger/) for step-by-step execution and workflow visualization.
 
 <div class="playground-widget" data-workflows='[{"id":"jsonlogic_demo","name":"JSONLogic Demo","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"transform","name":"Transform","function":{"name":"map","input":{"mappings":[{"path":"data.full_name","logic":{"cat":[{"var":"data.input.first_name"}," ",{"var":"data.input.last_name"}]}},{"path":"data.grade","logic":{"if":[{">=": [{"var":"data.input.score"},90]},"A",{">=": [{"var":"data.input.score"},80]},"B",{">=": [{"var":"data.input.score"},70]},"C","F"]}},{"path":"data.total","logic":{"*":[{"var":"data.input.price"},{"var":"data.input.quantity"}]}},{"path":"data.has_email","logic":{"!!":[{"var":"data.input.email"}]}}]}}}]}]' data-payload='{"first_name":"John","last_name":"Doe","score":85,"price":10,"quantity":5,"email":"john@example.com"}'>
 </div>
@@ -320,7 +317,7 @@ all **off by default** on `ExprEngine::default()` and selected at runtime on
 | `ExtObject` | *(always compiled in)* | `keys`, `values`, `entries` |
 | `ErrorHandling` | *(always compiled in)* | `try`, `throw` |
 | `Datetime` | `datetime` | `datetime`, `timestamp`, `parse_date`, `format_date`, `date_diff`, `now` |
-| *(via `all_operators()`)* | — | every compiled-in family above |
+| *(via `all_operators()`)* | none | every compiled-in family above |
 | `Tensor` | `tensor` | `tensor`, `zeros`, `full`, `scatter`, `rle_expand`, `one_hot`, `stack`, `concat`, `unstack`, `reshape`, `transpose`, `pad`, `crop`, `cast`, `normalize`, `argmax`, `gather`, `to_list`, `shape`, `dtype` (**not** in `all_operators()`, see below) |
 
 ```rust
@@ -335,15 +332,14 @@ let registry = Registry::new(exprs);
 # let _ = registry;
 ```
 
-### `Tensor` is opt-in separately
+### `Tensor` is opt-in
 
-`Tensor` is the one family `ExprEngineBuilder::all_operators` leaves out. A
-third of its names are ordinary JSON keys (`shape`, `full`, `cast`, `pad`,
-`crop`, `concat`, `stack`), and under templating mode a single-key object whose
-key is a live operator is *evaluated*, not passed through. Folding it into
-`all_operators()` would quietly change what `{"shape": ...}` means in workflows
-that already run, so you enable the `tensor` cargo feature and opt in to
-`OperatorFamily::Tensor` deliberately:
+`ExprEngineBuilder::all_operators` excludes `Tensor`. Several `Tensor`
+operator names match common JSON keys (`shape`, `full`, `cast`, `pad`,
+`crop`, `concat`, `stack`), and in templating mode a single-key object whose
+key matches an active operator is evaluated rather than passed through. Enable
+the `tensor` Cargo feature and add `OperatorFamily::Tensor` explicitly when
+you need tensor operations:
 
 ```toml
 [dependencies]
@@ -407,18 +403,17 @@ Prefixing a key with `$` says "this is data, not a call":
 | `{"$$oid": "abc"}` | `{"$oid": "abc"}` |
 | `{"$total": 1}` | `{"total": 1}` |
 
-Three things to know:
+Three rules apply to `$` escapes:
 
-1. **Exactly one prefix is stripped from every key**, not only from keys that
-   collide with an operator. `$total` is not an operator name and is still
-   stripped. So a template that emits `$`-prefixed keys (MongoDB's
-   `$set` and `$oid`, JSON Schema's `$schema` and `$ref`) must double them.
-   `Compiler::check` reports `ESCAPED_TEMPLATE_KEY`, an advisory, for every
-   escaped key, which is how you find them all.
-2. **It applies at every depth**, anywhere a template key appears, including
-   inside a `map` body or an `if` branch.
-3. **Two keys may not collapse to the same name.** `{"$a": 1, "a": 2}` would
-   emit `a` twice, so the workflow is refused (`DUPLICATE_TEMPLATE_KEY`).
+1. **The engine strips one leading `$` from every template key**, whether or
+   not the key matches an operator name. `$total` becomes `total`. Double the
+   prefix (`$$set`, `$$oid`, `$$schema`, `$$ref`) when your output template
+   must emit a leading `$`. `Compiler::check` reports an `ESCAPED_TEMPLATE_KEY`
+   advisory for every escaped key so you can audit them.
+2. **Escaping applies at every depth**, including inside `map` bodies and `if`
+   branches.
+3. **Two keys in one object cannot resolve to the same name.** The compiler
+   rejects `{"$a": 1, "a": 2}` with `DUPLICATE_TEMPLATE_KEY`.
 
 The prefix is `$` on every build, but an authoring tool that renders or
 validates the spelling should read it from the engine rather than hardcode it:
@@ -460,11 +455,10 @@ doubling. See [Documents with holes](./custom-functions.md#documents-with-holes)
 
 ### Checking what a build evaluates
 
-Because a disabled operator is inert rather than an error, you cannot answer
-"does this expression do anything?" by reading the rule alone.
-`ExprEngine::operators` reports the exact vocabulary of an engine: the core
-operators, whichever families were enabled on the builder, the host's own
-operators, and `secret`:
+Because disabled operators pass through as literal objects, you cannot tell
+from the JSON alone whether an operator is active. `ExprEngine::operators`
+lists every active operator in an engine: core operators, enabled families,
+custom host operators, and `secret`:
 
 ```rust
 use dataflow_rs::expr::{ExprEngine, OperatorFamily};
@@ -483,18 +477,16 @@ assert_eq!(map.family, OperatorFamily::Core);
 assert!(map.scoping && map.deterministic);
 ```
 
-An authoring tool should run this check before telling someone their
-expression is fine. A compiled workflow also carries a `fingerprint` of the
-operators and data keys its expressions use (`CompiledWorkflow::fingerprint`),
-which a host can keep beside the definition.
+Authoring tools can inspect `ExprEngine::operators` to validate operator usage.
+Each compiled workflow also exposes `CompiledWorkflow::fingerprint`, which
+records the operators and data keys used in its expressions.
 
-> **Note for JavaScript users:** the WASM package is built with `datetime` and
-> `ExprEngineBuilder::all_operators`, so every family in the table (except
-> `Tensor`) is live in the browser and in the [Playground](../playground.md). A
-> default `ExprEngine::default()` in Rust enables none of them, so an
-> expression using `length` or `switch` can work in the playground and be
-> silently inert in your Rust service unless its family is enabled on
-> `ExprEngineBuilder`.
+> **Note for JavaScript users:** the WASM package compiles with `datetime` and
+> `ExprEngineBuilder::all_operators`, enabling every family in the table
+> (except `Tensor`) in the browser and [Playground](../playground.md). In Rust,
+> `ExprEngine::default()` enables core operators only, so expressions using
+> `length` or `switch` evaluate as literal objects unless you enable those
+> families on `ExprEngineBuilder`.
 
 ## Compiling and evaluating expressions yourself
 

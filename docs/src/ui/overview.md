@@ -250,11 +250,11 @@ leave the visualizer out of the debug path, or keep everything inside
 
 `WasmEngineAdapter` calls `assertEngineVersion()` on construction and **throws**
 when the loaded WASM engine is older than the UI build expects. Versions
-compare as semver with any pre-release tag dropped. Do not catch it blindly:
-an older engine reads a definition key it predates as an unknown key, kept in
-the node's `ext` and reported, so a workflow using a newer feature loads and
-does something other than what it says. A newer engine passes silently, since
-the package declares a caret range on the wasm dependency.
+compare as semver with pre-release tags dropped. Do not ignore this error: an
+older engine treats newer definition keys as unknown keys (moving them into
+`ext`), so workflows using newer features will not behave as written. Newer
+engines pass the check because the package declares a caret range on the WASM
+dependency.
 
 ## Custom Engine
 

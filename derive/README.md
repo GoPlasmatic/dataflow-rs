@@ -1,12 +1,12 @@
 # dataflow-rs-derive
 
-The procedural macro behind [`dataflow-rs`](https://crates.io/crates/dataflow-rs):
-`#[derive(FunctionConfig)]`, which turns a host function's config struct into
-its compile function, its expression visitor, its field spec and its resolver.
+Procedural macro crate for [`dataflow-rs`](https://crates.io/crates/dataflow-rs).
+`#[derive(FunctionConfig)]` generates a host function config's compile
+function, expression visitor, field specification, and runtime resolver.
 
-This crate is not used on its own. `dataflow-rs` re-exports the derive as
-`dataflow_rs::function::FunctionConfig`, and the generated code names
-`::dataflow_rs::` paths, so depend on `dataflow-rs` and write:
+Do not depend on this crate on its own. `dataflow-rs` re-exports the derive as
+`dataflow_rs::function::FunctionConfig`, and the generated code references
+`::dataflow_rs::` paths. Add `dataflow-rs` to your dependencies and write:
 
 ```rust
 use dataflow_rs::expr::Output;
@@ -23,10 +23,9 @@ struct FetchConfig {
 }
 ```
 
-The attributes, the field types and what the derive generates are documented
-on `dataflow_rs::function::FunctionConfig`. The two crates are released
-together at one version, and `dataflow-rs` pins this one exactly.
+See `dataflow_rs::function::FunctionConfig` for supported attributes, field
+types, and generated methods. Both crates release together at the same version.
 
 ## License
 
-Apache-2.0, as `dataflow-rs`.
+Apache-2.0.

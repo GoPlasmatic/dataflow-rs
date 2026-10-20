@@ -14,9 +14,9 @@ version number, two members that are never published, and the book:
 | `derive/` | `dataflow-rs-derive`, the `#[derive(FunctionConfig)]` macro behind it | crates.io |
 | `wasm/` | `@goplasmatic/dataflow-wasm`, the engine for the browser and Node | npm |
 | `ui/` | `@goplasmatic/dataflow-ui`, the React debugger | npm |
-| `docs/` | mdBook user guide, deployed to GitHub Pages | — |
-| `docs-tests/` | Compiles the book's and the README's Rust examples as doctests | — |
-| `corpus/` | The corpus: the cases the engine's tests load, and the tools that read them | — |
+| `docs/` | mdBook user guide, deployed to GitHub Pages | none |
+| `docs-tests/` | Compiles the book's and the README's Rust examples as doctests | none |
+| `corpus/` | The corpus: the cases the engine's tests load, and the tools that read them | none |
 
 `wasm/` and `derive/` are workspace members; `ui/` is a separate npm project
 driven by the release workflow. The engine's version is authored once, in the
@@ -94,24 +94,21 @@ seconds when nothing changed.
 
 If wasm-pack is not installed the step warns and continues, so a contributor
 touching only `ui/` is not blocked. The second mechanism makes that safe: the
-engine exports `engine_version()`, and `WasmEngineAdapter`
-throws when the loaded engine is **older** than the `dataflow-ui` build using
-it. A newer engine passes silently, since the dependency is a caret range and
-npm may legitimately resolve one. Run `npm run wasm:local` by hand after any engine
-change if you keep a dev server running.
+engine exports `engine_version()`, and `WasmEngineAdapter` throws when the
+loaded engine is **older** than the `dataflow-ui` build using it. A newer
+engine passes, since the dependency is a caret range that npm can resolve to a
+newer release. Run `npm run wasm:local` by hand after any engine change if you
+keep a dev server running.
 
-Overlaying also clears `node_modules/.vite`, which is required: Vite keys its
-dependency cache off the lockfile, which does not change when files are
-overwritten in place, so without it the dev server keeps serving the old JS
-glue against the new binary. That pairing fails confusingly: init succeeds, and
-only a later mangled-name lookup throws.
+Overlaying also clears `node_modules/.vite`. Vite keys its dependency cache off
+the lockfile, which does not change when files are overwritten in place, so
+without clearing it the dev server serves old JS glue against the new binary.
 
-This overlay is deliberately one-directional: `predev` and `wasm:local` are
-the only scripts that call `use-local-wasm.mjs`. `build:lib` never does, and
-`prepublishOnly` (and therefore `npm publish`) runs it. Keep it that way. `release.yml` installs the engine it has just published immediately
-before running `build:lib`; a future `prebuild:lib` hook that overlaid a local
-build would silently overwrite that published engine partway through
-`publish-ui`, undoing the point of installing it.
+This overlay is one-directional: `predev` and `wasm:local` are the only scripts
+that call `use-local-wasm.mjs`. `build:lib` and `prepublishOnly` (and therefore
+`npm publish`) do not call it. `release.yml` installs the published engine
+before running `build:lib`; a `prebuild:lib` hook that overlaid a local build
+would overwrite that published engine during `publish-ui`.
 
 `npm run wasm:local` refuses to overlay a build that fails
 `wasm/scripts/verify-wasm.mjs`, the same guard the release pipeline runs
@@ -131,19 +128,16 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 ```
 
 `--all-targets` covers examples, tests, and benches. `--all-features` covers the
-`wasm-web` feature, which is otherwise silently skipped. The second clippy line
-is not redundant: bare at the root, it lints the root's **default** build,
-which is what `cargo add dataflow-rs` delivers, and `--workspace` cannot reach
-it for the feature-unification reason above.
+`wasm-web` feature, which cargo otherwise skips. The second clippy line lints
+the root's **default** build, which `cargo add dataflow-rs` delivers, and which
+`--workspace` skips because of Cargo feature unification.
 
-Do not skip the `cargo doc` line. Clippy does not lint rustdoc, so nothing above
-catches a broken intra-doc link, a link from public docs into a private item, or
-an unbackticked generic like `Arc<Logic>` that rustdoc parses as an HTML tag.
-All of these ship silently to docs.rs as dead or mangled text.
-CI runs it under `-D warnings` like everything else. `src/lib.rs` also warns on
-`missing_docs` and `missing_debug_implementations`, which `-D warnings` makes
-errors: every public item needs a doc comment and every public type a `Debug`
-impl.
+Run the `cargo doc` line as well. Clippy does not lint rustdoc, so `cargo doc`
+catches broken intra-doc links, links from public docs into private items, and
+unbackticked generics like `Arc<Logic>` that rustdoc parses as HTML tags. CI
+runs `cargo doc` under `-D warnings`. `src/lib.rs` also warns on `missing_docs`
+and `missing_debug_implementations`, so every public item needs a doc comment
+and every public type needs a `Debug` implementation.
 
 Lint *policy* lives in `[workspace.lints]` in the root `Cargo.toml` and is
 inherited by every member, so a bare `cargo clippy` and rust-analyzer
@@ -421,7 +415,7 @@ registration. It needs a case in the corpus, a row in `BUILTIN_FUNCTIONS`
 Releases are tag-gated and maintainer-run. Pushing to `main` runs CI and never
 publishes. A `v*` tag triggers `.github/workflows/release.yml`,
 which validates that the tag matches the workspace version and runs
-`scripts/check-versions.sh` — the same agreement check CI runs on every PR —
+`scripts/check-versions.sh` (the same agreement check CI runs on every PR),
 so `wasm/` (its inherited version and its `dataflow-rs` requirement),
 `derive/`, `ui/` and the install snippets in `README.md` and `docs/src/` must
 agree, and `CHANGELOG.md` must have the version's section; then publishes the

@@ -22,16 +22,16 @@
   <p><em>Two chained rules in the visual debugger: <strong>IF</strong> the condition matches, <strong>THEN</strong> the next rule runs. <a href="https://goplasmatic.github.io/dataflow-rs/debugger/">Try it live in your browser →</a></em></p>
 </div>
 
-Dataflow-rs is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. The engine compiles every rule's JSONLogic once when it is built, so a run does no parsing, and host functions run asynchronously. Use it to route events, validate data, or build multi-step automation pipelines.
+Dataflow-rs is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. The builder compiles every rule's JSONLogic once at build time, so runs skip parsing and execute host functions on Tokio. Use it to route events, validate data, or build multi-step automation pipelines.
 
-### ⚡ Blazing Fast Performance
-Dataflow-rs targets high-throughput hot paths. Every expression, every task config and every write path is compiled once at build time; a run evaluates against one view of the message and reads the clock once.
+### ⚡ Performance
+Dataflow-rs targets high-throughput hot paths. The builder compiles every expression, task config, and write path once at build time. A run evaluates against one view of the message and reads the clock once.
 
-Measured against 3.15.0 before 4.0's release, 16 of the 49 rows were judged faster and 25 better, 6 not slower, and the two that read worse at five rounds read not slower at seven; `loop_scaling`, a 1000-sweep append loop over a large context, ran in 1 to 3% of 3.15's time. The [Performance](#performance) section says how the gate measures and how to run the benchmarks yourself.
+In the 4.0 release gate against 3.15.0, the benchmark harness scored 16 of 49 metrics faster, 25 better, and 6 equal, while the two remaining metrics matched at seven rounds. `loop_scaling`, a 1000-sweep append loop over a large context, finished in 1 to 3% of 3.15's time. See [Performance](#performance) for the benchmark methodology and commands.
 
 ### 🧩 Full-Stack Ecosystem
-The same rule definitions run across your stack, not only in backend services:
-1.  **Rust Backend:** Run natively with maximum speed and concurrency using `dataflow-rs`.
+Run the same rule definitions across your stack:
+1.  **Rust Backend:** Run natively with high speed and concurrency using `dataflow-rs`.
 2.  **Browser & Edge:** Run client-side validations or edge routing through the WebAssembly bindings in [@goplasmatic/dataflow-wasm](https://www.npmjs.com/package/@goplasmatic/dataflow-wasm).
 3.  **React UI Admin Portal:** Let your team and your users visualize, edit, and step through rules with [@goplasmatic/dataflow-ui](https://www.npmjs.com/package/@goplasmatic/dataflow-ui).
 
@@ -55,13 +55,13 @@ The same rule definitions run across your stack, not only in backend services:
 |---|---|---|
 | **Rule** | `WorkflowDef` | A condition plus a list of tasks: IF the condition holds, THEN the tasks run |
 | **Action** | `TaskDef` | One processing step: a built-in (`map`, `validation`, ...) or a function you register |
-| **Message** | `Message` | What a run works on: a `payload`, a context of `data`, `metadata` and `temp_data`, an audit trail and an error list |
-| **Engine** | `Engine` | Compiled rules plus registered functions; `run` takes a message through every matching rule |
-| **Run** | `Run` | What one run reports: its status, what each rule did, and its trace when asked for |
+| **Message** | `Message` | Input and state for a run: `payload`, a context of `data`, `metadata`, and `temp_data`, an audit trail, and an error list |
+| **Engine** | `Engine` | Compiled rules plus registered functions; `run` takes a message through matching rules |
+| **Run** | `Run` | Report for one execution: status, per-rule records, and an optional trace |
 
 ## Why dataflow-rs?
 
-If you need dynamic business rules or user-customizable workflows, writing manual `if/else` checks makes your code rigid, while running full orchestrators (like Temporal or Zeebe) adds heavy infrastructure overhead and milliseconds of network latency. Dataflow-rs sits between the two:
+Dynamic business rules and user-customizable workflows outgrow hardcoded `if/else` branches, while distributed orchestrators (like Temporal or Zeebe) add infrastructure and network latency. Dataflow-rs sits between the two:
 
 | Capability | Hardcoded Rust | dataflow-rs | Heavy Orchestrators (Temporal/Zeebe) |
 |---|---|---|---|
@@ -134,10 +134,10 @@ means rules run in order and each one sees what the previous rules wrote.
 }
 ```
 
-> **The engine evaluates a rule's condition before any of its own tasks run.** A
-> condition can only read what earlier rules produced, never what its own tasks
-> are about to write. The parse therefore lives in its own rule here rather than
-> as a first task on `premium_order`.
+> **The engine evaluates a rule's condition before running its tasks.** A
+> condition reads what earlier rules produced, not what its own tasks will
+> write. Place `parse_json` in an earlier rule so `premium_order` can check
+> the parsed fields in its condition.
 
 ### 3. Run the Engine
 
@@ -195,22 +195,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`run` returns a `Run` on every status; it never short-circuits. `run_with`
-takes `RunOptions` for a channel, a routing bucket, a deadline, a cancellation
-token, a trace or a per-run observer.
+`run` returns a `Run` for every outcome without short-circuiting. Pass
+`RunOptions` to `run_with` when you need a channel, routing bucket, deadline,
+cancellation token, trace, or per-run observer.
 
 ### Handling Errors: Two Channels
 
 A run reports errors through **two channels**:
 
-- `run.status()` says how the run **ended**: `Completed`,
-  `CompletedWithErrors` (every rule finished, but records were made),
-  `Stopped(error)` (a task failed and its policies stopped the run),
-  `TimedOut` or `Cancelled` (the run's own deadline or token).
-- `message.errors()` **always** holds every record made, including those
-  from tasks whose policies let the run go on.
+- `run.status()` reports how the run **ended**: `Completed`,
+  `CompletedWithErrors` (rules finished, with error records on the message),
+  `Stopped(error)` (a task failed and its policy stopped the run),
+  `TimedOut`, or `Cancelled` (the run hit its deadline or cancellation token).
+- `message.errors()` holds every error record, including errors from tasks
+  whose policies allowed the run to continue.
 
-A `?` on `run.into_result()` surfaces only the first kind. To cover both, read each:
+Using `?` on `run.into_result()` surfaces only stopped, timed-out, or cancelled runs. Check both channels to handle all errors:
 
 ```rust
 use dataflow_rs::run::RunStatus;
@@ -257,21 +257,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-What a task's outcome does is the task's policy. A `4xx` is a **rejection**:
-`on_rejection: "continue"` (the default) or `"halt"`. A `5xx` or an `Err` is a
-**failure**: `on_failure: "fail"` (the default, which hands it to the
-workflow's own `on_failure`, `"fail"` or `"continue"`), `"halt"` (the
-workflow stops, the run goes on) or `"continue"`. A `validation` that rejects
-therefore never stops anything on its own; `"on_rejection": "halt"` is how a
-rule opts into rejecting, and the task keeps its status (a `400` stays a
-`400`). See the [error handling guide](docs/src/core-concepts/error-handling.md).
+Task policies control what happens after each outcome. A `4xx` status is a
+**rejection**, governed by `on_rejection`: `"continue"` (default) or `"halt"`.
+A `5xx` status or `Err` is a **failure**, governed by `on_failure`: `"fail"`
+(default, which delegates to the workflow's `on_failure` of `"fail"` or
+`"continue"`), `"halt"` (stops the workflow and continues the run), or
+`"continue"`. Because `validation` returns `400` on failure, it continues to
+the next task unless you set `"on_rejection": "halt"`. See the
+[error handling guide](docs/src/core-concepts/error-handling.md).
 
-### Branching on Why a Task Failed
+### Branching on Task Failures
 
-Both channels above are host-side. A rule's condition can't reach them: the
-JSONLogic context is `data`, `metadata` and `temp_data`, and the error list isn't
-in it. Give the engine a context path and it mirrors each failure's code
-there as it happens:
+Both error channels live on the host side. Rule conditions evaluate against
+`data`, `metadata`, and `temp_data`, which do not include `message.errors()`.
+Configure an `ErrorContext` path and the engine mirrors each failure's code into
+the context as it occurs:
 
 ```rust
 use dataflow_rs::run::{EngineConfig, ErrorContext};
@@ -311,17 +311,16 @@ a transient failure differently from a permanent one:
 {"in": [{"var": "metadata.errors.0.code"}, ["TIMEOUT_ERROR", "IO_ERROR"]]}
 ```
 
-The engine writes nothing there unless the config names a path, and it resets
-the path at the start of every run, so a message brings no records in. The
-records deliberately leave out the error text, since the context is serialized
-back to callers.
+The engine writes to this path only when configured and resets it at the start
+of each run. The mirrored records omit the error message text because callers
+receive the serialized context.
 
 ### Classifying Your Own Errors
 
-The built-in error kinds describe engine concerns: a missing function, a
-failed evaluation, a bad path. When a function fails for a reason only your
-service understands (a circuit breaker opened, a tenant hit a rate limit),
-classify it yourself instead of inventing a parallel error channel:
+Built-in error kinds cover engine concerns such as a missing function, a failed
+evaluation, or an invalid path. When a function fails for a service-specific
+reason (an open circuit breaker or a tenant rate limit), classify it with
+`Error::service`:
 
 ```rust
 use dataflow_rs::Error;
@@ -331,77 +330,74 @@ assert_eq!(e.code(), "circuit_open");
 assert!(e.is_retryable());
 ```
 
-The code becomes the record's `code` verbatim (not upper-cased, so the string
-your service writes is the string it switches on), and `retryable` is
-declared rather than inferred. The engine never interprets any of it: the
-task's `on_failure`, the audit entry and `Run::status` behave exactly as for
-any other failure, and `Run::retryable` repeats what the error declared.
+The engine preserves your `code` string without changing its case and reads the
+`retryable` flag you set. Task `on_failure` policies, audit entries, and
+`Run::status` handle service errors like any other failure, while
+`Run::retryable` returns the flag you declared.
 
 ## Key Features
 
-- **IF → THEN → THAT Model:** Define rules with JSONLogic conditions, execute actions, chain with priority ordering.
-- **Compile at Build:** Every expression, task config and write path is compiled when the engine is built, never per message. A definition that does not compile is refused with its issues at the paths the author typed.
-- **A Result on Every Status:** `run` returns a `Run` whether the run completed, stopped, timed out or was cancelled; the message and its trace are yours either way.
-- **Full Context Access:** Conditions can read any field in `data`, `metadata`, and `temp_data`.
-- **Secrets Outside the Record:** `{"secret": "name"}` reads an engine-scoped store that no trace, audit entry or serialized message ever contains, and `build()` refuses a workflow that would copy one into the message.
-- **Async-First Architecture:** Host functions are `async fn` on the Tokio runtime; the eight built-ins run inline.
-- **Tracing and Observability:** `TraceOptions` ask a run for a `Trace` whose changes replay to the context after every step, bounded by a byte budget and path redaction; an `Observer` sees every task as it goes, built-ins included, and its `Interest` decides whether a clock is read at all.
+- **IF → THEN → THAT Model:** Define rules with JSONLogic conditions, execute actions, and chain workflows in priority order.
+- **Compile at Build:** The builder compiles every expression, task config, and write path once and rejects invalid definitions with their authored paths.
+- **Complete Run Reports:** `run` returns a `Run` whether execution completed, stopped, timed out, or was cancelled, preserving the message and trace.
+- **Full Context Access:** Conditions read any field in `data`, `metadata`, and `temp_data`.
+- **Isolated Secrets:** `{"secret": "name"}` reads an engine-scoped store that stays out of traces, audit entries, and serialized messages. `build()` rejects workflows that would write a secret into the message.
+- **Async Host Functions:** Host functions are `async fn` on Tokio; the eight built-in functions run inline.
+- **Tracing and Observability:** `TraceOptions` records per-step changes that replay to reconstruct the context at any step, bounded by a byte budget and path redaction. `Observer` receives inline task events and reads the clock only when `Interest::TIMINGS` is set.
 - **Built-in Functions:** Parse, Map, Validate, Filter, Log, and Publish.
-- **Outcome Policies:** `on_failure` and `on_rejection` on every task, `on_failure` on the workflow, `terminal` tasks and task groups with one shared condition.
-- **Loops and Fan-Outs:** A workflow's `loop` runs its task list a bounded number of sweeps; a task's `for_each` calls its function once per element, isolated, and folds the results in element order at any `max_concurrency`.
-- **Deadlines and Cancellation:** `RunOptions::deadline` and a `CancelToken` end a run `TimedOut` or `Cancelled`, with the partial message and trace.
-- **Routing and Rollout:** Channels, traffic splits by bucket range, and a lifecycle `status` (active/paused/archived), version and tags on every workflow.
-- **Reload:** Compile new definitions with the engine's own compiler and swap the program; the old engine keeps serving in-flight runs.
-- **Extensible:** Add functions by implementing `Function` with a `#[derive(FunctionConfig)]` config whose fields are themselves JSONLogic; wrap every host call in a `CallLayer`; unit-test one call with `function::testing::call`.
-- **Service-Classified Errors:** Functions attach their own error code and retryability with `Error::service`; an `ErrorContext` mirrors each failure's code into the context for downstream rules.
-- **Every 3.x Definition Loads:** The compat reader rewrites 3.x spellings and reports each as an Advisory; see [Migrating from 3.x](#migrating-from-3x).
-- **Browser and UI:** Run rules in the browser with `@goplasmatic/dataflow-wasm`; visualize and debug them with `@goplasmatic/dataflow-ui`.
-- **Auditing:** An audit trail of every change as data flows through the pipeline.
+- **Outcome Policies:** Configure `on_failure` and `on_rejection` per task, `on_failure` per workflow, `terminal` tasks, and task groups sharing a condition.
+- **Loops and Fan-Outs:** Workflow `loop` runs a task list for a bounded number of sweeps. Task `for_each` calls a host function per array element in isolation and folds results in element order at any `max_concurrency`.
+- **Deadlines and Cancellation:** `RunOptions::deadline` and `CancelToken` end a run as `TimedOut` or `Cancelled`, returning the partial message and trace.
+- **Routing and Rollout:** Route by channel, split traffic by bucket range, and manage workflow `status` (`active`, `paused`, `archived`), version, and tags.
+- **Hot Reload:** Compile new definitions with `engine.compiler()` and swap the program with `with_program` while in-flight runs finish on the old program.
+- **Extensible:** Implement `Function` with `#[derive(FunctionConfig)]`, wrap host calls in a `CallLayer`, and unit-test individual calls with `function::testing::call`.
+- **Service-Classified Errors:** Attach custom error codes and retryability with `Error::service`, and mirror failure codes into the context with `ErrorContext`.
+- **3.x Compatibility:** The compat reader rewrites 3.x spellings into 4.0 format and reports each as an Advisory; see [Migrating from 3.x](#migrating-from-3x).
+- **Browser and UI:** Run rules in the browser with `@goplasmatic/dataflow-wasm` and debug them with `@goplasmatic/dataflow-ui`.
+- **Auditing:** Record an audit trail of context changes as data moves through the pipeline.
 
 ## Architecture
 
-**Compilation (startup).** `parse` reads each definition and reports every
-issue at its authored path, rewriting 3.x spellings on the way in. A
-`Compiler` over a `Registry` compiles each workflow on its own (expressions,
-task configs, write paths), so a host that quarantines keeps the workflows
-that compile, and `link` sorts them by priority into an immutable `Program`.
-`Engine::builder().build()` does all three and refuses if any is rejected.
+**Compilation (startup).** `def::parse` reads each definition, rewrites 3.x
+spellings, and reports issues at their authored paths. `Compiler` compiles each
+workflow against a `Registry` (expressions, task configs, write paths), so you
+can quarantine invalid workflows and keep valid ones. `link` sorts compiled
+workflows by priority into an immutable `Program`. `Engine::builder().build()`
+runs all three steps and fails if any workflow is rejected.
 
-**Execution (runtime).** `run` stamps the message, then considers each Active
-workflow in priority order: its rollout, then its condition. Built-ins run
-inline over one view of the context; a host function gets a `Ctx` whose
-writes land when the call returns `Ok` and are dropped whole on `Err`. After
-every call that does not skip, the engine writes `metadata.progress`, so a
-later rule can read what the previous one did. The `Run` says how it ended and what each workflow
-did; an `Observer` sees it as it goes, and a `Trace` records it when asked.
+**Execution (runtime).** `run` stamps the message and evaluates active
+workflows in priority order, checking rollout and then condition. Built-in
+functions run inline over one view of the context. Host functions receive a
+`Ctx` whose writes apply on `Ok` and drop on `Err`. After each non-skipped
+call, the engine updates `metadata.progress` so later rules can inspect what
+ran. `Run` reports the final status and per-workflow results, `Observer`
+receives inline events, and `Trace` records step diffs when requested.
 
 ## Performance
 
-Why it's fast:
-- **Compile at Build:** Every expression is compiled, every constant folded and every write path pre-split when the engine is built; a run parses nothing
-- **One View per Run:** Consecutive built-ins evaluate against one arena view of the context with a write log, instead of re-reading the message per task
-- **Overlay Writes:** A host function's writes go to a per-call overlay the call reads at once; the engine replays them at their own paths when the call settles
-- **Nothing Unasked:** A run reads the clock once. Observer and trace costs exist only when one is attached; the unobserved path pays one branch per call
-- **Async I/O:** Non-blocking host functions on Tokio; a fan-out runs its calls concurrently without spawning
+Key design choices keep per-message overhead low:
+- **Compile at Build:** The builder compiles expressions, folds constants, and pre-splits write paths ahead of time, so a run does no parsing.
+- **One View per Run:** Built-in tasks evaluate against a single arena view of the context and splice writes in place.
+- **Overlay Writes:** Host function writes land in a per-call overlay that the function can read immediately; the engine replays them into the context when the call returns `Ok`.
+- **Zero-Cost When Unwatched:** A run reads the clock once. Observer and trace work runs only when attached; the unwatched path adds a single branch per call.
+- **Async I/O:** Host functions run on Tokio without blocking, and fan-outs run calls concurrently without spawning tasks.
 
-Measured against 3.15.0 before 4.0's release, 16 of the 49 rows were judged
-faster and 25 better, 6 not slower, and the two `micro_subtree_write_bench`
-rows that read worse at five rounds read not slower at seven; `loop_scaling`
-ran in 1 to 3% of 3.15's time. The gate, `bench/gate.py`, compares two builds,
-a base commit against a candidate: it alternates them within each round and
-judges each metric on the median of its per-round ratios, with a noise floor
-of 3% or half the inter-quartile range, whichever is larger.
+In the 4.0 release gate against 3.15.0, 16 of 49 metrics scored faster, 25
+better, and 6 equal, while the two `micro_subtree_write_bench` rows matched at
+seven rounds. `loop_scaling` ran in 1 to 3% of 3.15's time. `bench/gate.py`
+compares a base commit against a candidate by alternating both builds within
+each round and judging the median per-round ratio against a noise floor of 3%
+or half the inter-quartile range.
 
-**Tuning tip:** if you never read audit trails, run with
-`RunOptions::default().capture_changes(false)`, or keep only the last few
-entries with `.audit(AuditMode::Last(n))`. Skipping the per-write old/new value
-copies is the largest single saving in mapping-heavy workloads; in a looping
-workflow it also stops every sweep's copies from being held until the run
-ends. See the [performance guide](docs/src/advanced/performance.md) for more.
+**Tuning tip:** If you do not read audit trails, pass
+`RunOptions::default().capture_changes(false)` or keep only recent entries
+with `.audit(AuditMode::Last(n))`. Skipping per-write old and new value copies
+gives the largest savings in mapping-heavy and looping workflows. See the
+[performance guide](docs/src/advanced/performance.md).
 
-Run the benchmarks yourself, always with `--release`. The crate has thirteen
-benchmark examples ([CONTRIBUTING.md](CONTRIBUTING.md#benchmarks)
-lists them); each checks its result before it times anything:
+Run benchmarks with `--release`. The crate includes thirteen benchmark examples
+(listed in [CONTRIBUTING.md](CONTRIBUTING.md#benchmarks)), and each verifies
+its output before timing:
 
 ```bash
 cargo run --example benchmark --release                # Throughput + latency percentiles
@@ -410,9 +406,7 @@ cargo run --example loop_scaling --release             # 1000-sweep append loop 
 cargo run --example async_handler_benchmark --release  # Marginal cost of one host function call
 ```
 
-Numbers carry roughly ±2-3% run-to-run noise, so compare the mean of 3+ runs,
-and interleave A/B runs rather than running all of one build and then all of
-the other.
+Runs vary by 2 to 3%. Compare the mean of three or more interleaved A/B runs.
 
 ## Custom Functions
 
@@ -609,8 +603,7 @@ Workflows support lifecycle management fields:
 | `created_at` | datetime | `null` | Creation timestamp (ISO 8601) |
 | `updated_at` | datetime | `null` | Last update timestamp (ISO 8601) |
 
-All fields are optional. A key the engine does not know is kept in the node's
-`ext` and reported, never silently dropped.
+All fields are optional. Unknown keys move into the node's `ext` map and produce an issue report.
 
 ## Traffic Splits (Canary Rollouts)
 
@@ -809,37 +802,35 @@ Because every rule is plain JSON, the [React UI](https://www.npmjs.com/package/@
 
 ## Migrating from 3.x
 
-Every 3.x definition still loads. The compat reader, on by default, rewrites
-each 3.x spelling into 4.0's (`continue_on_error` and `halt_on` into
-`on_failure` and `on_rejection`, `validate` into `validation`) and reports the
-rewrite as a `V3_SPELLING` Advisory at the 3.x key, so nothing that loaded
-before is refused; `dataflow_rs::compat::migrate_v3` writes a definition out in
-the 4.0 spelling. The Rust API is new: `Engine::run` returns a `Run` on every
-status in place of the `process_message` family, a host function implements
-`Function` with a `#[derive(FunctionConfig)]` config in place of
-`AsyncFunctionHandler` and `TaskContext`, `Outcome` is `TaskOutcome` unchanged,
-`Error` replaces `DataflowError`, and a message is built with
-`Message::from_json` or `Message::from_parts` in place of `Message::builder`.
-The wire shapes (the message, its audit trail and its errors) are 3.x's. See
-[Migrating from 3.x](docs/src/migration/from-3.md) for the full list.
+Existing 3.x definitions load through the compat reader, which is enabled by
+default. The reader rewrites 3.x spellings into 4.0 equivalents
+(`continue_on_error` and `halt_on` into `on_failure` and `on_rejection`, and
+`validate` into `validation`) and reports each as a `V3_SPELLING` Advisory at
+the 3.x key. `dataflow_rs::compat::migrate_v3` writes a definition out in the
+4.0 format. In the Rust API, `Engine::run` returns a `Run` on every status in
+place of the `process_message` family, host functions implement `Function` with
+`#[derive(FunctionConfig)]` in place of `AsyncFunctionHandler` and
+`TaskContext`, `Outcome` replaces `TaskOutcome`, `Error` replaces
+`DataflowError`, and `Message::from_json` or `Message::from_parts` replaces
+`Message::builder`. Wire formats for `Message`, audit trails, and error records
+match 3.x. See [Migrating from 3.x](docs/src/migration/from-3.md).
 
 ## Contributing
 
-Contributions are welcome. To get started:
+Contributions are welcome:
 
 1. **Fork** the repository and clone your fork
 2. **Run tests:** `cargo test --workspace --all-features` (what CI runs) and `cargo test` at the root (the default feature set)
-3. **Make changes** and add tests for any new features
+3. **Make changes** and add tests for new features
 4. **Run the benchmarks** before and after: `cargo run --example benchmark --release`, interleaving the two builds
-5. **Submit a pull request** with a clear description of your changes
+5. **Submit a pull request** describing your changes
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the checks CI runs and the
-[CHANGELOG](CHANGELOG.md) for recent changes and release history.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the CI checks and [CHANGELOG](CHANGELOG.md) for release history.
 
 ## About Plasmatic
 
-Dataflow-rs is developed by the team at [Plasmatic](https://github.com/GoPlasmatic). We build open-source tools for data processing and automation.
+The [Plasmatic](https://github.com/GoPlasmatic) team develops dataflow-rs and builds open-source tools for data processing and automation.
 
 ## License
 
-This project is licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file for more details.
+Apache License, Version 2.0. See [LICENSE](LICENSE).

@@ -1,8 +1,8 @@
 # Playground
 
-Try dataflow-rs in your browser. Define workflows, give them a payload, and see the message the engine produces and how the run ended.
+Try dataflow-rs in your browser. Define workflows, supply a payload, and inspect the resulting message and run status.
 
-> **Looking for advanced debugging?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and the context at every step.
+> Open the [Full Debugger UI](/dataflow-rs/debugger/) for step-by-step execution and per-step context inspection.
 
 <div id="full-playground"></div>
 

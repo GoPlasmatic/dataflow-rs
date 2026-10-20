@@ -10,7 +10,7 @@ whose tasks run built-in or host functions over a message's context, with
 JSONLogic conditions and expressions compiled once at build.
 
 This is a **Cargo workspace with four published artifacts**, version-locked to
-the engine's version — authored once in `[workspace.package] version` and
+the engine's version, authored once in `[workspace.package] version` and
 inherited by the published Rust crates:
 
 | Path | Artifact | Registry |
@@ -114,10 +114,9 @@ cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 ```
 
-The doc check is not optional politeness. Clippy does not lint rustdoc, so
-nothing else catches a broken intra-doc link, a link from public docs into a
-private item, or an unbackticked generic like `Arc<Logic>` that rustdoc parses
-as an HTML tag. All of these ship silently to docs.rs as dead or mangled text.
+The doc check is required. Clippy does not lint rustdoc, so nothing else catches
+a broken intra-doc link, a link from public docs into a private item, or an
+unbackticked generic like `Arc<Logic>` that rustdoc parses as an HTML tag.
 `src/lib.rs` warns on `missing_docs` and `missing_debug_implementations`, and
 CI's `-D warnings` makes both errors: every public item needs a doc comment and
 every public type a `Debug` impl (a manual one with `finish_non_exhaustive()`
@@ -130,15 +129,13 @@ enforces. Adding a lint there means fixing every existing violation in the same
 change: CI's `-D warnings` gives no grace period.
 
 `--all-targets` covers examples, tests and benches; `--all-features` covers the
-`wasm-web` feature, which is otherwise silently skipped. Never leave clippy
-warnings behind.
+`wasm-web` feature, which cargo otherwise skips. Fix all clippy warnings.
 
-The third line is not redundant: bare at the root, it lints the root's
-**default** build, which is what `cargo add dataflow-rs` delivers. `--workspace`
-cannot do it: `dataflow-wasm` depends on the root with `wasm-web` and
-`datetime`, and cargo unifies features across the members one invocation
-selects, so under `--workspace` the root itself has `datetime` on.
-Same reasoning applies to `cargo test`.
+The third line lints the root's **default** build, which `cargo add dataflow-rs`
+delivers. `--workspace` cannot do this: `dataflow-wasm` depends on the root with
+`wasm-web` and `datetime`, and cargo unifies features across the members one
+invocation selects, so under `--workspace` the root itself has `datetime` on.
+The same applies to `cargo test`.
 
 The root's own checks, beside the workspace-wide ones above:
 
@@ -179,9 +176,9 @@ scans each newly linked test binary on its first launch, which can add minutes.
 integration binaries (`it`, `secrets_isolation`, `ts_types`), the derive crate,
 the corpus crate, and `dataflow-docs-tests` (which compiles the book's and
 READMEs' Rust blocks against a default-feature build). Because `datetime`,
-`tensor` and `budget` are `#[cfg]`-gated, the root's test count legitimately
-varies by feature set (`--all-features` vs default). Do not hard-code absolute
-test counts in docs or tests.
+`tensor` and `budget` are `#[cfg]`-gated, the root's test count varies by
+feature set (`--all-features` vs default). Do not hard-code absolute test counts
+in docs or tests.
 
 ### Examples
 
@@ -593,10 +590,10 @@ that failed between the two resumes at the root. A crate's first release
 needs the `CRATES_IO_TOKEN` secret to carry the `publish-new` scope. `wasm/`
 is `publish = false`: it ships through npm only.
 
-`scripts/check-versions.sh` — CI on every PR, `release.yml` against the tag —
-checks that the workspace version, the internal crates' pins, `ui/`'s versions
-and the install snippets' minor all agree, and (outside a `-dev` version) that
-`CHANGELOG.md` has the version's section.
+`scripts/check-versions.sh` (run by CI on every PR and by `release.yml` against
+the tag) checks that the workspace version, the internal crates' pins, `ui/`'s
+versions and the install snippets' minor all agree, and (outside a `-dev`
+version) that `CHANGELOG.md` has the version's section.
 
 ## The machine
 

@@ -11,16 +11,16 @@
 
 ---
 
-The [dataflow-rs](https://github.com/GoPlasmatic/dataflow-rs) 4.0 engine compiled to WebAssembly, for the browser and Node. One class, `WasmEngine`, runs messages through a set of workflow definitions and resolves with the message, a record of the run and, when asked, a trace. The same definitions run on a Rust backend unchanged.
+The [dataflow-rs](https://github.com/GoPlasmatic/dataflow-rs) 4.0 engine compiled to WebAssembly for the browser and Node. `WasmEngine` runs messages through workflow definitions and resolves with the message, a run report, and an optional trace. The same definitions run on a Rust backend unchanged.
 
 ## Features
 
-- **The engine, not a port**: the Rust crate built for `wasm32-unknown-unknown` with `datetime` and `ExprEngineBuilder::all_operators`, every optional operator family except `tensor`
+- **Compiled Rust engine**: built from the root crate for `wasm32-unknown-unknown` with `datetime` and `ExprEngineBuilder::all_operators` (all optional operator families except `tensor`)
 - **Built-in functions**: `parse_json`, `parse_xml`, `map`, `validation`, `filter`, `log`, `publish_json`, `publish_xml`
-- **Typed end to end**: the package's `.d.ts` carries the engine's wire types (`Message`, `Run`, `Trace`, `Issue` and the rest), generated from the crate
-- **A result on every status**: a run that stops, times out or fails resolves, with `run.status` saying how
-- **Traces that replay**: a trace records each step's changes; `contexts(trace)` rebuilds the context after every step
-- **Definition tools**: `check` and `parse` report a definition's issues at their authored paths before anything runs
+- **Typed end to end**: `.d.ts` declarations include the engine's wire types (`Message`, `Run`, `Trace`, `Issue`, and related types) generated from the Rust crate
+- **Resolves on every status**: stopped, timed-out, and failed runs resolve with `run.status` describing the outcome
+- **Replayable traces**: traces record per-step changes, and `contexts(trace)` or `TraceReplay` reconstructs the context after any step
+- **Definition validation**: `check` and `parse` report definition issues at their authored paths before execution
 
 ## Installation
 
@@ -228,7 +228,7 @@ const issues = engine.check({ id: 'draft', tasks: [{ id: 't', function: { name: 
 
 ### `engine.workflow_count()`, `engine.workflow_ids()`, `engine.free()`
 
-How many workflows the engine holds; their ids, in program order, as a `string[]`; and the release of the engine's WebAssembly memory once it is no longer used.
+`workflow_count()` returns the number of loaded workflows, `workflow_ids()` returns their IDs in program order as a `string[]`, and `free()` releases the engine's WebAssembly memory.
 
 ### Module functions
 

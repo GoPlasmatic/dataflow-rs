@@ -391,10 +391,10 @@ Notes on the edges:
 - **`elapsed`** is the call alone, the recording not included, and is `Some`
   only for an observer whose interest holds `TIMINGS`.
 
-The callback runs **synchronously on the run's thread**. It must not block,
-must not re-enter the engine, and must not panic (a panic unwinds out of
-`run`). Push to a channel or bump an atomic. Every event variant is
-`#[non_exhaustive]`, so match its fields with `..`.
+The callback runs on the run's thread. Keep it non-blocking, do not re-enter
+the engine, and do not panic (a panic unwinds out of `run`). Push to a channel
+or increment an atomic counter. Match event variants with `..` because each
+variant is `#[non_exhaustive]`.
 
 ### Workflow and run lifecycle
 
@@ -563,7 +563,7 @@ What an engine is configured with beside its program; a reload keeps it.
 `EngineConfig::default().observer(Arc<dyn Observer>)` reports every run to
 an observer; `.error_context(ErrorContext::new(path, limit)?)` mirrors each
 failure's code into the context at `path`, keeping the newest `limit`
-records. See [Error Handling](./error-handling.md#branching-on-why-a-task-failed).
+records. See [Error Handling](./error-handling.md#branching-on-task-failures).
 
 ### `Engine::new(program, config)`
 

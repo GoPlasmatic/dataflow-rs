@@ -314,21 +314,21 @@ In workflow conditions and mappings, access message fields using JSONLogic:
 {"var": "temp_data.intermediate_result"}
 ```
 
-`payload` is **not** part of that tree. It is a separate field on `Message`, so
-`{"var": "payload.foo"}` resolves to nothing. Because expressions run in
-templating mode, it fails *silently* rather than erroring: the condition is
-never true. Run a `parse_json` (or `parse_xml`) task first to land the
-payload under `data`, then read it as `{"var": "data.…"}`. `Compiler::check`
-reports a literal `var` rooted at `payload` as a `PAYLOAD_VAR` defect, and a
-host function reads the payload through `Ctx::payload`.
+`payload` is a separate field on `Message` and is **not** part of the context
+tree. In templating mode, `{"var": "payload.foo"}` resolves to `null`, so a
+condition reading `payload` evaluates to `false`. Run a `parse_json` (or
+`parse_xml`) task first to copy the payload under `data`, then read it with
+`{"var": "data.…"}`. `Compiler::check` flags any literal `var` rooted at
+`payload` as a `PAYLOAD_VAR` defect, and host functions read the payload
+through `Ctx::payload`.
 
-Secrets are not in the tree either, on purpose: everything in it is recorded.
-You read a signing key with `{"secret": "name"}` from a store the engine holds
-outside the message; see [Secrets](../advanced/secrets.md).
+Secrets stay outside the context tree because the engine serializes and traces
+the context. Read secrets with `{"secret": "name"}` from the engine's secret
+store; see [Secrets](../advanced/secrets.md).
 
 ## Try It
 
-> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
+> Open the [Full Debugger UI](/dataflow-rs/debugger/) for step-by-step execution and workflow visualization.
 
 <div class="playground-widget" data-workflows='[{"id":"message_demo","name":"Message Demo","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"set_temp","name":"Set Temp Data","function":{"name":"map","input":{"mappings":[{"path":"temp_data.full_name","logic":{"cat":[{"var":"data.input.first_name"}," ",{"var":"data.input.last_name"}]}}]}}},{"id":"use_temp","name":"Use Temp Data","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"temp_data.full_name"},"!"]}}]}}}]}]' data-payload='{"first_name":"John","last_name":"Doe"}'>
 </div>

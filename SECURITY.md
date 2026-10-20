@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Security fixes are issued for the latest `4.x` minor release only. Older
+Maintainers issue security fixes for the latest `4.x` minor release. Older
 releases do not receive backports; upgrade to the current release.
 
 | Version              | Supported |
@@ -19,7 +19,7 @@ This policy covers all four published artifacts, which share a version number:
 
 ## Reporting a Vulnerability
 
-**Please do not open a public issue for security reports.**
+**Do not open a public issue for security reports.**
 
 Use GitHub's private vulnerability reporting:
 [Report a vulnerability](https://github.com/GoPlasmatic/dataflow-rs/security/advisories/new).
@@ -28,24 +28,22 @@ This opens a private thread visible only to the maintainers.
 If you cannot use GitHub advisories, email **shankar@goplasmatic.io** with
 `[SECURITY] dataflow-rs` in the subject line.
 
-Please include:
+Include:
 
 - The affected version and artifact (crate, wasm, or UI)
 - A description of the issue and its impact
-- Steps to reproduce, ideally a minimal workflow JSON or code sample
+- Steps to reproduce, with a minimal workflow JSON or code sample
 - Any known mitigations
 
-### What to expect
+### Response Timeline
 
 - **Acknowledgement** within 3 business days
-- **Initial assessment** (whether we can reproduce it, and a severity call)
-  within 10 business days
-- **Fix and release**: we aim to ship a patch release within 30 days of a
-  confirmed report, sooner for high-severity issues
+- **Initial assessment** (reproduction and severity) within 10 business days
+- **Fix and release** within 30 days of a confirmed report, or sooner for high-severity issues
 - **Credit** in the release notes and advisory, unless you prefer otherwise
 
-We will coordinate disclosure timing with you and will not publish details
-before a fix is available.
+Maintainers coordinate disclosure timing with you and publish details after a
+fix ships.
 
 ## Scope
 

@@ -60,13 +60,12 @@ Workflows provide:
 | `created_at` | datetime | No | Creation timestamp (ISO 8601); kept, never read |
 | `updated_at` | datetime | No | Last update timestamp (ISO 8601); kept, never read |
 
-With the compat reader on (the default), an unknown key does not fail the
-definition: it moves into the owning node's `ext` and is reported as an
-`UNKNOWN_KEY` advisory, or as a `LIKELY_TYPO` defect when it is a near miss
-of a known key (one edit for a key of up to five characters, two for a
-longer one), so a misspelt `conditon` is caught rather than silently
-ignored. With the reader off (`ParseOptions::default().compat(false)`), every
-unknown key is refused.
+With the compat reader on (the default), unknown keys move into the owning
+node's `ext` map instead of rejecting the definition. The parser reports them
+as `UNKNOWN_KEY` advisories, or as `LIKELY_TYPO` defects when within edit
+distance of a known key (one edit for keys up to five characters, two for
+longer keys), catching typos like `conditon`. With the compat reader off
+(`ParseOptions::default().compat(false)`), the parser rejects unknown keys.
 
 ## Creating Workflows
 
@@ -142,9 +141,9 @@ for issue in &parsed.issues {
 
 ### Loading a 3.x definition
 
-A 3.x definition loads as it is. The compat reader, on by default, rewrites
-each 3.x spelling into its 4.0 counterpart and reports the rewrite as a
-`V3_SPELLING` advisory at the 3.x key, so nothing is silently reinterpreted:
+3.x definitions load through the compat reader, which is on by default. The
+reader rewrites each 3.x spelling into its 4.0 counterpart and reports a
+`V3_SPELLING` advisory at the 3.x key:
 
 ```rust
 use dataflow_rs::def::{FailurePolicy, ParseOptions, StepDef, parse};
@@ -414,34 +413,31 @@ let run = engine.run_with(&mut message, &opts).await;
 # }
 ```
 
-How you map a request to a bucket is your policy: a sticky hash of some request
-identity (so a given user always sees the same version), a per-message random
-draw, round-robin. That deliberately stays outside this crate. Buckets are
-`0..=99`, so take a hash `% 100`: a larger bucket is served as 99, as in 3.x
-(`Rollout::MAX_BUCKET`), and the wasm package refuses one.
+You choose how to map requests to buckets: a sticky hash of a user ID, a
+random draw per message, or round-robin. Buckets span `0..=99` (for example,
+`hash % 100`). Native runs clamp values above 99 to 99 (`Rollout::MAX_BUCKET`),
+while the WASM package rejects out-of-range buckets.
 
-Three rules apply:
+Rollout rules:
 
-- **A run with no bucket is admitted by every workflow**, split or not. The
-  trade-off is that setting `rollout` and forgetting the bucket runs *every*
-  version on the same message, so set both together.
-- **An excluded workflow is skipped exactly like a false condition**: no audit
-  entry, `metadata.progress` untouched, `Selection::SkippedByRollout` in the
-  `Run`, and one `Skipped` step in a trace. The gate runs before any work on
-  the context, so exclusion is cheap.
-- **A host function sees the run's bucket** as `ctx.info().routing_bucket`,
-  so a function that starts a child run passes it on and the child keeps the
-  caller's rollout decision. A child run given no bucket runs every version.
+- **Runs without a bucket match every workflow**, split or not. Always set a
+  `routing_bucket` on `RunOptions` when using `rollout`, or every version will
+  run on the same message.
+- **Excluded workflows skip like a false condition**: no audit entry,
+  `metadata.progress` unchanged, `Selection::SkippedByRollout` on `Run`, and
+  one `Skipped` step in a trace. The engine checks rollout before evaluating
+  the context.
+- **Host functions can read the run's bucket** via `ctx.info().routing_bucket`
+  and forward it when starting child runs.
 
 ### Building and checking a split
 
-A single `rollout` is only half the picture. Correctness is a property of the
-whole *set*: the versions of one logical workflow must partition `0..100`
-exactly. Both ways of getting that wrong are silent in
-production: a **gap** blackholes a slice of traffic, and an **overlap** makes
-which version answers depend on workflow ordering rather than on the rollout.
+A single `rollout` defines one slice; the full set of active versions for a
+workflow must partition `0..100` with no gaps and no overlaps. A gap drops
+traffic for unmapped buckets, while an overlap runs multiple versions on the
+same message.
 
-`Rollout::partition` turns percentages into contiguous ranges, in traffic order:
+`Rollout::partition` converts percentages into contiguous ranges in input order:
 
 ```rust
 use dataflow_rs::def::{Rollout, RolloutError};
@@ -450,15 +446,15 @@ let split = Rollout::partition(&[90, 10]).unwrap();
 assert_eq!(split[0], Rollout::new(0, 90));
 assert_eq!(split[1], Rollout::new(90, 100));
 
-// The percentages must sum to exactly 100, and the error names the direction.
+// Percentages must sum to 100; the error reports Under or Over.
 assert_eq!(Rollout::partition(&[90, 9]), Err(RolloutError::Under { total: 99 }));
 assert_eq!(Rollout::partition(&[90, 11]), Err(RolloutError::Over { total: 101 }));
 ```
 
-A `0` entry is allowed and yields an empty range, which serves nothing: the
-natural way to express a version that is staged but takes no traffic yet.
+A `0` entry produces an empty range that serves no traffic, which lets you
+stage a version before routing traffic to it.
 
-`Rollout::validate_set` checks a set you already have, wherever it came from:
+`Rollout::validate_set` checks an existing set of ranges:
 
 ```rust
 use dataflow_rs::def::{Rollout, RolloutError};
@@ -466,28 +462,26 @@ use dataflow_rs::def::{Rollout, RolloutError};
 let good = Rollout::partition(&[50, 50]).unwrap();
 assert!(Rollout::validate_set(&good).is_ok());
 
-// Order does not matter: partitioning is a property of the set.
+// Order does not affect partitioning.
 let reversed: Vec<_> = good.iter().rev().copied().collect();
 assert!(Rollout::validate_set(&reversed).is_ok());
 
-// A gap is reported at the lowest affected bucket.
+// A gap is reported at the lowest missing bucket.
 let gapped = [Rollout::new(0, 40), Rollout::new(41, 100)];
 assert_eq!(Rollout::validate_set(&gapped), Err(RolloutError::Gap { bucket: 40 }));
 ```
 
-Ranges are checked individually first, so an inverted range or one reaching past
-bucket 100 is reported as itself rather than as whatever downstream gap it
-happens to produce (`def::parse` also reports an inverted or out-of-range
-rollout on a single workflow as an `INVALID_ROLLOUT` defect).
+`validate_set` checks individual ranges first, reporting inverted or
+out-of-bounds ranges directly (`def::parse` also flags an invalid range on a
+single workflow as an `INVALID_ROLLOUT` defect).
 
-Neither `parse` nor `build()` checks the *set* across workflows. A definition does not know
-which version-set it belongs to (that grouping lives in your storage schema),
-so calling `validate_set` before you activate a set of versions is the host's
-job, and these helpers are what it calls.
+Call `validate_set` in your host service before activating a group of workflow
+versions, since individual definitions do not declare which version group they
+belong to.
 
 ## Try It
 
-> **Want more features?** Try the [Full Debugger UI](/dataflow-rs/debugger/) with step-by-step execution and workflow visualization.
+> Open the [Full Debugger UI](/dataflow-rs/debugger/) for step-by-step execution and workflow visualization.
 
 <div class="playground-widget" data-workflows='[{"id":"parse_workflow","name":"Parse Input","priority":1,"tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}}]},{"id":"conditional_workflow","name":"Conditional Workflow","priority":2,"condition":{"==":[{"var":"data.input.role"},"admin"]},"tasks":[{"id":"greet","name":"Greet User","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Welcome, ",{"var":"data.input.name"},"!"]}}]}}}]}]' data-payload='{"name":"Alice","role":"admin"}'>
 </div>

@@ -22,31 +22,32 @@ races each host call on a Tokio timer, which the `time` feature provides.
 
 ## Operator Families and Cargo Features
 
-All cargo features are off by default, and `ExprEngine::default()` enables core
+Cargo features are off by default, and `ExprEngine::default()` enables core
 JSONLogic only. The six pure-operator extension families (`ExtString`,
-`ExtArray`, `ExtMath`, `ExtControl`, `ExtObject`, `ErrorHandling`) are compiled
-in unconditionally and selected at runtime on `ExprEngineBuilder`
+`ExtArray`, `ExtMath`, `ExtControl`, `ExtObject`, `ErrorHandling`) compile in
+by default and are enabled at runtime on `ExprEngineBuilder`
 (`family`, `families`, `all_operators`).
 
 | Cargo Feature | Unlocks |
 |---|---|
 | `datetime` | `OperatorFamily::Datetime` (`datetime`, `timestamp`, `parse_date`, `format_date`, `date_diff`, `now`); also changes `==` and the ordering operators on plain date-shaped strings |
-| `tensor` | `OperatorFamily::Tensor` (`tensor`, `zeros`, `full`, `scatter`, `rle_expand`, `one_hot`, `stack`, `concat`, `unstack`, `reshape`, `transpose`, `pad`, `crop`, `cast`, `normalize`, `argmax`, `gather`, `to_list`, `shape`, `dtype`). Deliberately **not** in `ExprEngineBuilder::all_operators`: several names collide with ordinary JSON keys |
+| `tensor` | `OperatorFamily::Tensor` (`tensor`, `zeros`, `full`, `scatter`, `rle_expand`, `one_hot`, `stack`, `concat`, `unstack`, `reshape`, `transpose`, `pad`, `crop`, `cast`, `normalize`, `argmax`, `gather`, `to_list`, `shape`, `dtype`). Excluded from `ExprEngineBuilder::all_operators` because several names collide with common JSON keys |
 | `budget` | `ExprEngineBuilder::ops_budget`: a per-evaluation operation ceiling with a hard abort |
 | `wasm-web` | required when targeting `wasm32-unknown-unknown` |
-| `ts` | derives TypeScript declarations for the wire shapes. Outside semver: the generator and its output's layout may change in any release |
+| `ts` | derives TypeScript declarations for the wire shapes. Outside semver: the generator and its output layout may change in any release |
 
 ```toml
 [dependencies]
 dataflow-rs = { version = "4.0", features = ["datetime", "budget"] }
 ```
 
-Enabling an operator family is not a no-op. The engine always runs in
-templating mode, so an operator whose family is off is literal data:
-`{"length": …}` echoes back as an object until `OperatorFamily::ExtString` is
-on, after which it evaluates. `{"$length": …}` pins the literal reading. Read
+Enabling an operator family changes how templating evaluates matching single-key
+objects. When a family is off, its operator names pass through as literal data:
+`{"length": …}` returns an object until you enable `OperatorFamily::ExtString`,
+after which it evaluates as an operator. Prefix the key with `$`
+(`{"$length": …}`) to keep the literal object. Read
 [JSONLogic → Operator Families](../advanced/jsonlogic.md#operator-families)
-before enabling one.
+before enabling a family.
 
 ## Verify Installation
 
