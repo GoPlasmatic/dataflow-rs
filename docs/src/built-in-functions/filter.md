@@ -186,6 +186,7 @@ and [Control Flow](../advanced/control-flow.md).
 
 - The condition is compiled when the engine is built; a condition that reads
   nothing folds to a constant, so a literal `true` or `false` costs nothing.
-- `filter` never modifies the message; it only controls what runs.
-- An evaluation error rejects, with the default `halt` that is a `299` and
-  nothing on the message's errors.
+- `filter` never modifies the message's context; it only controls what runs.
+- An evaluation error rejects (`299` under the default `halt`) and records
+  `EVALUATION_ERROR` on the message's errors; exceeding the ops budget fails
+  the task with `BUDGET_EXCEEDED`, under its `on_failure`.

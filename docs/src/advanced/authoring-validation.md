@@ -197,6 +197,8 @@ since the function could not honour it.
 | `INVALID_FUNCTION_NAME` | Rejected | `function` is not an object with a non-empty `name` |
 | `INVALID_TERMINAL` | Rejected | `terminal` is present but not a boolean |
 | `PARSE_FAILED` | Rejected | A key is missing or of the wrong type; the message says what was expected |
+| `NULL_CONDITION` | Advisory | A literal `null` `condition`: kept as the falsy expression `null`, so the step never runs; omit the key for no condition |
+| `INVALID_ROLLOUT` | Defect | A workflow's `rollout` range can never match (`bucket_end < bucket_start` or `bucket_end > 100`), so the workflow is never selected |
 | `MIXED_SPELLING` | Rejected | A 3.x policy key (`continue_on_error`, `halt_on`) beside a 4.0 one on one node |
 | `EXT_COLLISION` | Rejected | A key kept in `ext` under a name `ext` already holds |
 

@@ -96,8 +96,9 @@ assert_eq!(
 the name a task's `function.name` calls it by. A name registered twice is
 replaced. The eight built-in names, and `validate` (the 3.x alias for
 `validation`), are reserved: registering under one panics, so a host that
-registers names from data checks them against `def::BUILTIN_FUNCTIONS`
-first.
+registers names from data checks them against `def::is_reserved_function`
+first, or calls `Registry::try_register`, which returns an `Err` of kind
+`Config` instead of panicking.
 
 A function that takes no input has `type Config = ();`. Its input must then
 be `{}`, `null` or absent.

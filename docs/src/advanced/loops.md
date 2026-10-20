@@ -258,7 +258,8 @@ Two things make this work:
 - **No `advance` task is needed.** The engine increments `i` after each sweep.
 
 Every operator used here (`reduce`, `<`, `+`, and computed-path `val`) is a
-core operator, available without enabling any `ext-*` cargo feature.
+core operator, available on `ExprEngine::default()` without enabling any
+`OperatorFamily`.
 
 **`temp_data` carries over between sweeps**; only the engine-owned slots are
 rewritten. For per-item state, use `scratch`; see

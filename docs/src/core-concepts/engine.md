@@ -552,10 +552,10 @@ broken reload never replaces a working engine.
 
 ### `Engine::builder()`
 
-Returns an `EngineBuilder`. Chain `.workflow_json(&value)`, `.workflow(def)`,
-`.register("name", function)`, `.layer(layer)`, `.registry(registry)`,
-`.options(CompileOptions)`, `.config(EngineConfig)`, then
-`.build() -> Result<Engine, Vec<Issue>>`.
+Returns an `EngineBuilder`. Chain `.workflow_json(&value)`,
+`.workflow_json_owned(value)`, `.workflow(def)`, `.register("name", function)`,
+`.layer(layer)`, `.registry(registry)`, `.options(CompileOptions)`,
+`.config(EngineConfig)`, then `.build() -> Result<Engine, Vec<Issue>>`.
 
 ### `EngineConfig`
 

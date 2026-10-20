@@ -39,8 +39,8 @@ GoPlasmatic/Orion#385.
 
 ## Layout
 
-- `src/lib.rs`: the crate doc, the features, and the fifteen root re-exports
-  (`Engine`, `Message`, `Run`, `RunOptions`, `Error`, `Issue`, `Result`,
+- `src/lib.rs`: the crate doc, the features, and the sixteen root re-exports
+  (`Engine`, `Message`, `Run`, `RunOptions`, `Error`, `ErrorKind`, `Issue`, `Result`,
   `WorkflowDef`, `Expr`, `Path`, `Ctx`, `Function`, `Outcome`, `Registry`,
   `Observer`). `extern crate self as dataflow_rs`, so the derive's
   `::dataflow_rs::` paths resolve inside the crate.

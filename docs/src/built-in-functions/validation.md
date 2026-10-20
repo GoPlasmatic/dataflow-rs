@@ -87,12 +87,11 @@ its `logic`; it may not report one. See [Secrets](../advanced/secrets.md).
 Each failing rule appends one record to the message's errors:
 
 ```json
-{"code": "VALIDATION_ERROR", "message": "Email is required", "path": null, "timestamp": "2026-10-16T19:12:26.123456+00:00"}
+{"code": "VALIDATION_ERROR", "message": "Email is required", "path": null, "workflow_id": "w", "task_id": "check", "timestamp": "2026-10-16T19:12:26.123456+00:00"}
 ```
 
-A record carries the run's timestamp and no `workflow_id` or `task_id`, as
-in 3.x; attribute it by its position among the errors, or by the audit entry
-that recorded `400`. Read them from Rust after a run:
+Each record carries `workflow_id`, `task_id` and the run's timestamp, as every
+other task record does (3.x wrote neither id on validation records). Read them from Rust after a run:
 
 ```rust
 # fn _demo(message: &dataflow_rs::Message) {
@@ -269,7 +268,7 @@ fails on every message.
 
 JSONLogic has no regex operator. Substring and prefix checks cover many
 cases: `in` is a core operator, `starts_with` and `ends_with` need
-`ext-string`.
+`OperatorFamily::ExtString`.
 
 ```json
 {"logic": {"in": ["@", {"var": "data.email"}]}, "message": "Invalid email format"}

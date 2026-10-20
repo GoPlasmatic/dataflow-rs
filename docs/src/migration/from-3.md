@@ -572,7 +572,9 @@ assert!(e.is_retryable());
 ```
 
 The recorded codes `LOGIC_ERROR`, `TIMEOUT_ERROR`, `BUDGET_EXCEEDED`,
-`TASK_STATUS_ERROR` and `VALIDATION_ERROR` are unchanged; `CANCELLED` and
+`TASK_STATUS_ERROR`, `EVALUATION_ERROR` and `VALIDATION_ERROR` are unchanged,
+and every record a task adds now carries `workflow_id` and `task_id` (3.x
+left them unset on `validation`'s records and on `add_error`); `CANCELLED` and
 `MAPPING_ERROR` are new,
 and `TIMEOUT_ERROR` is now also what the engine's own deadline writes.
 `FUNCTION_NOT_FOUND` and `DESERIALIZATION_ERROR` are gone: an unregistered

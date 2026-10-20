@@ -59,7 +59,7 @@ only through `parse`, which is also the linter, and serializes back in the
 | `Status` | `active`, `paused` or `archived`; only `active` workflows run |
 | `Rollout`, `RolloutError` | A workflow's slice of its channel's traffic |
 | `defaults` | The values `parse` reads for an absent key (`PRIORITY`, `VERSION`, `CHANNEL`, `INIT`, `INCREMENT`, `MAX_CONCURRENCY`) |
-| `MAX_GROUP_DEPTH`, `BUILTIN_FUNCTIONS` | The nesting limit (8); the eight reserved names |
+| `MAX_GROUP_DEPTH`, `BUILTIN_FUNCTIONS`, `is_reserved_function` | The nesting limit (8); the eight reserved built-in names; whether a name is reserved (`BUILTIN_FUNCTIONS` or `validate`) |
 | `definition_keys`, `DefinitionKeys` | The keys the engine knows at each level of a definition |
 
 ## `expr`: expressions
@@ -96,7 +96,7 @@ run inline; a host function is one `Function` with one derived config.
 | `Prepare` | What `prepare` is told: the name, workflow id, task id and spec |
 | `CallLayer`, `Next`, `BoxFuture` | Around-call middleware for host calls, at registry or run scope |
 | `layers::Answer` | A ready-made layer answering calls from a closure, for a dry run |
-| `Registry`, `FunctionInfo` | Functions and layers plus the `ExprEngine` they compile against; `catalogue()` lists them |
+| `Registry`, `FunctionInfo` | Functions (`register`, `try_register`) and layers plus the `ExprEngine` they compile against; `catalogue()` lists them |
 | `Templated`, `Rendered` | A plugin's config whose fields a manifest declares at runtime; a filled document |
 | `testing` | `call(f, input)` runs one call through the real compile, overlay and layers; `config` compiles a config alone |
 
@@ -108,11 +108,11 @@ a host owns quarantine: a Rejected issue rejects only its own workflow.
 
 | Name | Purpose |
 |---|---|
-| `Compiler`, `CompileOptions` | `check(&def)` returns every issue; `compile_one(&def)` returns a `Compiled` or every issue; `link(workflows)` makes a `Program` |
+| `Compiler`, `CompileOptions` | `check(&def)` returns every issue; `check_steps(&steps, root)` checks a step fragment; `compile_one(&def)` returns a `Compiled` or every issue; `link(workflows)` makes a `Program` |
 | `Compiled`, `CompiledWorkflow` | An accepted workflow with its Defects and Advisories; `fingerprint()` |
 | `Program`, `WorkflowInfo`, `TaskInfo` | Linked workflows, immutable, with dense indices; what the program lists about each |
 | `ProgramId`, `WorkflowIx`, `TaskIx` | The identity of a build and the positions within it |
-| `IssueCode`, `Severity` | A finding's code (v3's 34 and v4's 8, `as_str()` is the stable spelling) and its `Rejected`, `Defect` or `Advisory` class |
+| `IssueCode`, `Severity` | A finding's code (v3's 30 and v4's 12, `as_str()` is the stable spelling) and its `Rejected`, `Defect` or `Advisory` class |
 | `AuthoredPath`, `PathSeg`, `StepKind` | Where in the authored JSON, as v3 spelled it (`tasks[1].tasks[0].id`); the kind of step it sits in |
 | `ResourceOracle` | A host's answer to "does this connector exist", checked against `Reference` fields |
 | `Fingerprint` | The operators and data keys a workflow's expressions use; `Display` and `FromStr` |
@@ -157,7 +157,7 @@ on its `Run`. [docs.rs](https://docs.rs/dataflow-rs/4.0.0/dataflow_rs/observe/)
 | Name | Purpose |
 |---|---|
 | `migrate_v3` | Parses with the compat reader on and writes the definition in the 4.0 spelling; `Err` holds every issue when any is Rejected |
-| `Migrated`, `Rewrite` | The result: the JSON, each rewrite (its path, the v3 and v4 spellings) and every issue |
+| `Migrated`, `Rewrite`, `RewriteKind` | The result: the parsed `def` and `json`, each rewrite (its path and structured `Policy` or `Function` kind) and every issue |
 
 See [Migrating from 3.x](../migration/from-3.md) for what the reader rewrites.
 

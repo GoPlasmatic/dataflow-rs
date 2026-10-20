@@ -369,20 +369,20 @@ though they are natural companions to it. Iterating an object's entries with
 
 dataflow-rs runs JSONLogic in **templating mode**, where an unrecognised
 operator name is not an error: the object passes through as literal data. So
-these features are not additive.
+operator families are not additive.
 
-Before `ext-string`, a mapping that produces `{"length": {"var": "data.x"}}`
-stores that object verbatim. After `ext-string`, the same mapping stores a
-number. Audit your rules for object keys matching any operator in the table
-above before enabling its family.
+Before `OperatorFamily::ExtString` is enabled, a mapping that produces
+`{"length": {"var": "data.x"}}` stores that object verbatim. After it is
+enabled, the same mapping stores a number. Audit your rules for object keys
+matching any operator in the table above before enabling its family.
 
 The fix is to say which you meant. `{"$length": …}` is a *literal* object with a
 `length` field, whatever families are enabled. See
 [Literal keys and the `$` escape](#literal-keys-and-the--escape) below.
 
-`datetime` goes further and changes **core** operators. With it on, `==`, `<`,
-`<=`, `>` and `>=` first try to parse plain string operands as datetimes or
-durations:
+`datetime` goes further and changes **core** operators. With the `datetime`
+cargo feature on, `==`, `<`, `<=`, `>` and `>=` first try to parse plain string
+operands as datetimes or durations:
 
 ```json
 {"==": ["2024-01-15T00:00:00Z", "2024-01-15T01:00:00+01:00"]}
@@ -463,8 +463,8 @@ doubling. See [Documents with holes](./custom-functions.md#documents-with-holes)
 Because a disabled operator is inert rather than an error, you cannot answer
 "does this expression do anything?" by reading the rule alone.
 `ExprEngine::operators` reports the exact vocabulary of an engine: the core
-operators, whichever families were compiled in, the host's own operators,
-and `secret`:
+operators, whichever families were enabled on the builder, the host's own
+operators, and `secret`:
 
 ```rust
 use dataflow_rs::expr::{ExprEngine, OperatorFamily};
@@ -474,7 +474,7 @@ let names: Vec<&str> = exprs.operators().iter().map(|op| &*op.name).collect();
 
 assert!(names.contains(&"var"));      // core: always present
 assert!(names.contains(&"secret"));   // the engine's own, on every build
-// `length` appears here only when the `ext-string` feature is enabled.
+// `length` appears here only when `OperatorFamily::ExtString` is enabled.
 
 // Each entry says which family it belongs to, whether it scopes `var` to an
 // element (`map`, `filter`, `reduce`, ...), and whether it is deterministic.
@@ -488,11 +488,13 @@ expression is fine. A compiled workflow also carries a `fingerprint` of the
 operators and data keys its expressions use (`CompiledWorkflow::fingerprint`),
 which a host can keep beside the definition.
 
-> **Note for JavaScript users:** the WASM package is built with
-> `all-operators`, so every family in the table is live in the browser and in
-> the [Playground](../playground.md). A default `cargo add dataflow-rs` build
-> has none of them, so an expression using `length` or `switch` can work in the
-> playground and be silently inert in your Rust service.
+> **Note for JavaScript users:** the WASM package is built with `datetime` and
+> `ExprEngineBuilder::all_operators`, so every family in the table (except
+> `Tensor`) is live in the browser and in the [Playground](../playground.md). A
+> default `ExprEngine::default()` in Rust enables none of them, so an
+> expression using `length` or `switch` can work in the playground and be
+> silently inert in your Rust service unless its family is enabled on
+> `ExprEngineBuilder`.
 
 ## Compiling and evaluating expressions yourself
 

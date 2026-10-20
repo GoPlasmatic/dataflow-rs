@@ -193,6 +193,10 @@ Nothing is snapshotted. The context after any step is `Trace::contexts()`,
 which replays the steps' changes from `initial` in order; the last one is
 the message's context, on every status, the run that stopped included. For
 a `map` step, `Trace::mapping_contexts(step)` replays mapping by mapping.
+For interactive navigation over a long trace, `observe::Replay` keeps one
+working context and seeks on demand (`context_at`, `mapping_context_at`). A
+host that reads a trace from an external caller can validate its paths,
+root writes and `mapping_ends` first with `Trace::validate()`.
 
 A trace records its own changes whatever `capture_changes` says, which
 governs the audit trail alone. Three differences from the audit entry's

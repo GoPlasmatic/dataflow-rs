@@ -81,9 +81,9 @@ what that does to the workflow.
 
 | Function | Returns |
 |----------|---------|
-| `map` | `Ok`. A mapping that fails is logged, the rest still run, and the call ends with status `500` |
+| `map` | `Ok`. A mapping that fails records `MAPPING_ERROR` and is logged, the rest still run, and the call ends with status `500` |
 | `validation` | `Ok`, or status `400` when any rule failed, with one error record per failing rule |
-| `filter` | `Ok`, or `Halt` (status `299`) or `Skip` (no audit entry) by `on_reject` |
+| `filter` | `Ok`, or `Halt` (status `299`) or `Skip` (no audit entry) by `on_reject` (`EVALUATION_ERROR` is recorded if the condition fails to evaluate) |
 | `log` | `Ok`, always |
 | `parse_json` | `Ok`. Only a computed `source` that names no source fails the call |
 | `parse_xml` | `Ok`, or an error (`VALIDATION_ERROR`) when the source is not a string or not an XML document |

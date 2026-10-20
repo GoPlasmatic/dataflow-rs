@@ -265,8 +265,9 @@ registry; `Registry::register` does the same on a registry a host keeps. A
 name registered before is replaced. The eight built-in names, and `validate`,
 are reserved: registering one panics, as does a spec the config cannot
 honour, such as a `Reference` naming a field the config does not have. A
-host that registers names from data checks them against
-`def::BUILTIN_FUNCTIONS` first.
+host that registers names from data checks them with
+`def::is_reserved_function` first, or calls `Registry::try_register`, which
+returns an `Err` of kind `Config` instead of panicking.
 
 ```rust
 # use dataflow_rs::datavalue::OwnedDataValue;

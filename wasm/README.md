@@ -112,7 +112,7 @@ Runs one message and resolves with `{ message, run, trace? }` on every status. T
 | `data` | `JsonValue` | The `data` root the message starts with. An object, else ignored. |
 | `metadata` | `JsonValue` | The `metadata` root the message starts with. An object, else ignored. |
 | `channel` | `string` | The channel whose workflows run. Every active workflow when unset. |
-| `routing_bucket` | `number` | The rollout bucket, 0 to 255. Every rollout admits an unset one. |
+| `routing_bucket` | `number` | The rollout bucket, 0 to 99 (a hash `% 100`). Every rollout admits an unset one. |
 | `capture_changes` | `boolean` | Record each task's changes in the audit trail. On by default. |
 | `audit` | `"full" \| "off" \| { last: number }` | Which audit entries the message keeps. `"full"` by default. |
 | `trace` | `boolean \| TraceOptions` | Trace the run. Off by default. `true` takes the default options. |

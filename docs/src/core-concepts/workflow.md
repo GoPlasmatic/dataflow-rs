@@ -477,9 +477,10 @@ assert_eq!(Rollout::validate_set(&gapped), Err(RolloutError::Gap { bucket: 40 })
 
 Ranges are checked individually first, so an inverted range or one reaching past
 bucket 100 is reported as itself rather than as whatever downstream gap it
-happens to produce.
+happens to produce (`def::parse` also reports an inverted or out-of-range
+rollout on a single workflow as an `INVALID_ROLLOUT` defect).
 
-Neither `parse` nor `build()` runs this check. A definition does not know
+Neither `parse` nor `build()` checks the *set* across workflows. A definition does not know
 which version-set it belongs to (that grouping lives in your storage schema),
 so calling `validate_set` before you activate a set of versions is the host's
 job, and these helpers are what it calls.

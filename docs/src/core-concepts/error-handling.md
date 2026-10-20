@@ -422,10 +422,16 @@ rule fails, and a rule whose logic fails to evaluate records
 ### Evaluation Errors
 
 A `log` expression that fails to evaluate is written as `<eval error>`, and
-the task still returns `200`. A `map` mapping that fails to evaluate is
+the task still returns `200`. A `map` mapping that fails to evaluate records
+`MAPPING_ERROR` on `message.errors()` (with its destination as `path`), is
 logged, the remaining mappings still run, and the call ends with status
-`500`, a failure the task's `on_failure` decides. A workflow or task condition that fails to evaluate counts as
-false; the `Run` reports a workflow's as `Selection::ConditionFailed(error)`.
+`500`, a failure the task's `on_failure` decides. A `filter` condition that
+fails to evaluate rejects (`299` under `halt`, or skips under `skip`) and
+records `EVALUATION_ERROR` on `message.errors()`. Exceeding the `ExprEngine`'s
+ops budget in `validation`, `map` or `filter` fails the task with
+`BUDGET_EXCEEDED`, under its `on_failure`. A workflow or task condition that
+fails to evaluate counts as false; the `Run` reports a workflow's as
+`Selection::ConditionFailed(error)`.
 
 ### Host Function Errors
 

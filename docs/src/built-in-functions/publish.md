@@ -16,7 +16,10 @@ Both share one config:
 `source` and `target` name locations, never values, and either may be
 computed from the message. A `source` that begins with `data.` is read with
 3.x's fallback: `data.response` reads `data.data.response` and, when that is
-missing, `data.response`.
+missing, `data.response`; an empty `source` (`""`) or `"data."` serializes the
+whole of `data`. Naming the other function's field (`root_element` on
+`publish_json`, or `pretty` on `publish_xml`) is ignored and reported as an
+`UNKNOWN_KEY` advisory at that key.
 
 The source must exist and not be `null`. Otherwise the call fails with
 `VALIDATION_ERROR`:

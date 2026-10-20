@@ -106,7 +106,9 @@ this writes `data.batch_2 = {"k": "c"}`.
 
 A literal `source` is checked when the engine is built: `"source": "extra.x"`
 names no payload path and no context root, so the definition is refused with
-`INVALID_PATH` at `tasks[0].function.input.source`. A computed source is
+`INVALID_PATH` at `tasks[0].function.input.source`. A bare root with a trailing
+dot (`"payload."`, `"data."`, `"metadata."`, `"temp_data."`) names the root
+itself. A computed source is
 checked when it is evaluated: one that resolves to `extra.x` fails the call
 with `CONFIG_ERROR` (``Task p error: path `extra.x` must start at `data`, `metadata` or `temp_data` ``),
 the audit entry records `500`, and the task's `on_failure` decides what
