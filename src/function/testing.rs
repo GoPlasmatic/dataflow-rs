@@ -285,6 +285,7 @@ impl<F: Function> Call<F> {
         // The clock is read once, as a run reads it, for the records' stamp.
         let now = Utc::now();
         let mut now_text = None;
+        let budget = crate::run::TaskBudget::unlimited();
         let parts = message.parts();
         let mut rc = RunContext::new(parts.context, Tuning::default());
         let Invoked {
@@ -300,6 +301,7 @@ impl<F: Function> Call<F> {
                 binding: None,
                 payload: parts.payload,
                 exprs: registry.exprs(),
+                budget: &budget,
                 info: CallInfo {
                     program: ProgramId::next(),
                     workflow: WorkflowIx::new(0),

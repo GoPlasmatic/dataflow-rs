@@ -1,17 +1,299 @@
 //! The error type and the wire shape of a recorded error.
 
+use super::AuthoredPath;
 use serde::ser::SerializeStruct;
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::Cow;
 use std::fmt;
+use std::str::FromStr;
 use std::sync::Arc;
 
+mod error_code_serde {
+    use super::{Cow, Deserialize, Deserializer, FromStr, Serializer};
+    use datalogic_rs::ErrorCode;
+
+    pub(super) fn serialize<S: Serializer>(code: &ErrorCode, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(code.as_str())
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<ErrorCode, D::Error> {
+        let text = Cow::<str>::deserialize(d)?;
+        ErrorCode::from_str(&text).map_err(serde::de::Error::custom)
+    }
+}
+
+/// One step in a compiled expression's structural evaluation path, from
+/// root to failing node.
+///
+/// Mirrors [`datalogic_rs::PathStep`] with `PartialEq + Eq` so a host can
+/// persist, compare, or inspect where inside a rule an evaluation failed
+/// without re-parsing a display string.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ExprPathStep {
+    /// Compile-time node id, matching [`datalogic_rs::Error::node_ids`].
+    pub node_id: u32,
+    /// Operator name at this node, when one applies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator: Option<String>,
+    /// Zero-based position within the parent node's argument list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arg_index: Option<u32>,
+    /// JSONLogic-flavoured pointer from the root to this node (e.g. `"/if/0/>/0"`).
+    pub json_pointer: String,
+}
+
+impl From<datalogic_rs::PathStep> for ExprPathStep {
+    fn from(step: datalogic_rs::PathStep) -> Self {
+        Self {
+            node_id: step.node_id,
+            operator: step.operator,
+            arg_index: step.arg_index,
+            json_pointer: step.json_pointer,
+        }
+    }
+}
+
+impl From<&datalogic_rs::PathStep> for ExprPathStep {
+    fn from(step: &datalogic_rs::PathStep) -> Self {
+        Self {
+            node_id: step.node_id,
+            operator: step.operator.clone(),
+            arg_index: step.arg_index,
+            json_pointer: step.json_pointer.clone(),
+        }
+    }
+}
+
+/// Structured budget exhaustion details from expression evaluation or run
+/// task accounting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct BudgetCause {
+    /// The operation or task count when the ceiling was crossed.
+    pub used: u64,
+    /// The configured ceiling.
+    pub limit: u64,
+}
+
+impl BudgetCause {
+    /// Budget exhaustion where `used` crossed `limit`.
+    pub const fn new(used: u64, limit: u64) -> Self {
+        Self { used, limit }
+    }
+}
+
+/// Structured diagnostic details for an expression compilation, evaluation
+/// or budget failure.
+///
+/// Carried on [`Error::expr_cause`] and [`ErrorRecord::cause`] for host
+/// diagnostics without changing the sanitized wire serialization of [`Error`]
+/// or [`ErrorRecord`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ExprCause {
+    /// Machine-stable error code from the expression engine.
+    #[serde(with = "error_code_serde")]
+    pub code: datalogic_rs::ErrorCode,
+    /// The operator that raised the error, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator: Option<String>,
+    /// RFC 6901 JSON Pointer to the failing sub-expression in the authored
+    /// rule, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expr_path: Option<String>,
+    /// Structural steps from the root of the compiled expression to the
+    /// failing node.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<ExprPathStep>,
+    /// Budget exhaustion details when `code` is
+    /// [`ErrorCode::BudgetExceeded`](datalogic_rs::ErrorCode::BudgetExceeded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<BudgetCause>,
+    /// Operations spent by this evaluation before failing, when metered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ops: Option<u64>,
+}
+
+impl ExprCause {
+    /// Operations spent by this evaluation before failing, when metered.
+    pub const fn ops_spent(&self) -> Option<u64> {
+        self.ops
+    }
+
+    /// Extracts structured cause metadata from a [`datalogic_rs::Error`] and,
+    /// when available, the compiled [`datalogic_rs::Logic`] it failed in.
+    pub(crate) fn from_datalogic(
+        e: &datalogic_rs::Error,
+        logic: Option<&datalogic_rs::Logic>,
+        ops: Option<u64>,
+    ) -> Self {
+        let (expr_path, steps) = match logic {
+            Some(logic) => {
+                let resolved = e.resolve_path(logic);
+                let expr_path = resolved.last().map(|s| s.json_pointer.clone());
+                let steps = resolved.into_iter().map(ExprPathStep::from).collect();
+                (expr_path, steps)
+            }
+            None => (None, Vec::new()),
+        };
+        let budget = match e.kind {
+            datalogic_rs::ErrorKind::BudgetExceeded { budget, spent } => {
+                Some(BudgetCause::new(spent, budget))
+            }
+            _ => None,
+        };
+        Self {
+            code: e.code(),
+            operator: e.operator().map(str::to_owned),
+            expr_path,
+            steps,
+            budget,
+            ops: ops.or_else(|| budget.as_ref().map(|b| b.used)),
+        }
+    }
+
+    /// Cause for an expression whose evaluated value did not convert to its
+    /// target type `T`.
+    pub(crate) fn type_mismatch(ops: Option<u64>) -> Self {
+        Self {
+            code: datalogic_rs::ErrorCode::TypeError,
+            operator: None,
+            expr_path: Some(String::new()),
+            steps: Vec::new(),
+            budget: None,
+            ops,
+        }
+    }
+
+    /// Cause for a run-level operation or task budget exceeded outside a
+    /// single expression's own ceiling.
+    pub(crate) fn budget_exceeded(used: u64, limit: u64, ops: Option<u64>) -> Self {
+        Self {
+            code: datalogic_rs::ErrorCode::BudgetExceeded,
+            operator: None,
+            expr_path: None,
+            steps: Vec::new(),
+            budget: Some(BudgetCause::new(used, limit)),
+            ops,
+        }
+    }
+}
+
+/// Which workflow execution site produced an [`Error`] or [`ErrorRecord`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SiteKind {
+    /// A workflow's top-level `condition`.
+    WorkflowCondition,
+    /// A task group's `condition`.
+    GroupCondition,
+    /// A task's `condition`.
+    TaskCondition,
+    /// A `filter` built-in's `condition`.
+    FilterCondition,
+    /// A `validation` built-in's rule `logic`.
+    ValidationRule,
+    /// A `validation` built-in's rule `message`.
+    ValidationMessage,
+    /// A `map` built-in's mapping destination `path`.
+    MappingPath,
+    /// A `map` built-in's mapping `logic`.
+    MappingLogic,
+    /// A workflow's `loop.over`.
+    LoopOver,
+    /// A task's `for_each.over`.
+    ForEachOver,
+    /// A task's function input or execution.
+    Task,
+}
+
+/// Where in a workflow a runtime [`Error`] or [`ErrorRecord`] originated.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct ErrorSite {
+    /// Which kind of site failed.
+    pub kind: SiteKind,
+    /// The workflow's id.
+    pub workflow_id: Arc<str>,
+    /// The task's id, when the site belongs to a task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<Arc<str>>,
+    /// The group's id, when the site is a group condition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<Arc<str>>,
+    /// Zero-based rule index when the site is a `validation` rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule_index: Option<usize>,
+    /// Zero-based mapping index when the site is a `map` mapping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mapping_index: Option<usize>,
+    /// Target context path when the site is a `map` mapping with a known destination.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_path: Option<Arc<str>>,
+    /// Where the site sits in the authored workflow definition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authored_path: Option<AuthoredPath>,
+    /// The loop sweep counter, inside a workflow's loop.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_counter: Option<i64>,
+}
+
+impl ErrorSite {
+    /// A site of `kind` in `workflow_id`.
+    pub fn new(kind: SiteKind, workflow_id: Arc<str>) -> Self {
+        Self {
+            kind,
+            workflow_id,
+            task_id: None,
+            group_id: None,
+            rule_index: None,
+            mapping_index: None,
+            target_path: None,
+            authored_path: None,
+            loop_counter: None,
+        }
+    }
+
+    /// Sets the task id on this site.
+    #[must_use]
+    pub fn with_task(mut self, task_id: Arc<str>) -> Self {
+        self.task_id = Some(task_id);
+        self
+    }
+
+    /// Sets the group id on this site.
+    #[must_use]
+    pub fn with_group(mut self, group_id: Arc<str>) -> Self {
+        self.group_id = Some(group_id);
+        self
+    }
+
+    /// Sets the authored path on this site.
+    #[must_use]
+    pub fn with_path(mut self, path: AuthoredPath) -> Self {
+        self.authored_path = Some(path);
+        self
+    }
+
+    /// Sets the loop sweep counter on this site.
+    #[must_use]
+    pub fn with_loop_counter(mut self, loop_counter: Option<i64>) -> Self {
+        self.loop_counter = loop_counter;
+        self
+    }
+}
+
 /// Why a run, a compile or a function failed.
+#[derive(Clone)]
 pub struct Error {
     kind: ErrorKind,
     message: Cow<'static, str>,
     retryable: bool,
-    source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    source: Option<Arc<dyn std::error::Error + Send + Sync>>,
+    expr_cause: Option<Arc<ExprCause>>,
+    site: Option<Arc<ErrorSite>>,
 }
 
 /// The class of an [`Error`]. It decides the recorded code.
@@ -58,6 +340,8 @@ impl Error {
             kind,
             message: message.into(),
             source: None,
+            expr_cause: None,
+            site: None,
         }
     }
 
@@ -71,7 +355,14 @@ impl Error {
             message: message.into(),
             retryable: false,
             source: None,
+            expr_cause: None,
+            site: None,
         }
+    }
+
+    /// An error indicating an operation, task, or custom run budget was exceeded.
+    pub fn budget(message: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(ErrorKind::Budget, message)
     }
 
     /// The class of the error.
@@ -94,8 +385,49 @@ impl Error {
     /// Attaches the error that caused this one.
     #[must_use]
     pub fn with_source(mut self, source: impl std::error::Error + Send + Sync + 'static) -> Self {
-        self.source = Some(Box::new(source));
+        self.source = Some(Arc::new(source));
         self
+    }
+
+    /// The underlying [`datalogic_rs::Error`], when this error came from
+    /// expression compilation or evaluation.
+    pub fn datalogic_error(&self) -> Option<&datalogic_rs::Error> {
+        self.source
+            .as_deref()
+            .and_then(|s| s.downcast_ref::<datalogic_rs::Error>())
+    }
+
+    /// Attaches structured expression diagnostics to this error.
+    #[must_use]
+    pub fn with_expr_cause(mut self, cause: ExprCause) -> Self {
+        self.expr_cause = Some(Arc::new(cause));
+        self
+    }
+
+    /// Structured expression diagnostics, when this error came from an
+    /// expression or a budget check.
+    pub fn expr_cause(&self) -> Option<&ExprCause> {
+        self.expr_cause.as_deref()
+    }
+
+    pub(crate) fn expr_cause_arc(&self) -> Option<Arc<ExprCause>> {
+        self.expr_cause.clone()
+    }
+
+    /// Attaches the workflow site where this error happened.
+    #[must_use]
+    pub fn with_site(mut self, site: ErrorSite) -> Self {
+        self.site = Some(Arc::new(site));
+        self
+    }
+
+    /// Where in the workflow this error happened, when known.
+    pub fn site(&self) -> Option<&ErrorSite> {
+        self.site.as_deref()
+    }
+
+    pub(crate) fn site_arc(&self) -> Option<Arc<ErrorSite>> {
+        self.site.clone()
     }
 
     /// May a retry succeed? A timeout says yes unless told otherwise; everything
@@ -104,10 +436,18 @@ impl Error {
         self.retryable
     }
 
-    /// Prefixes the message with `context`, keeping kind, retryability and source.
+    /// Prefixes the message with `context`, keeping kind, retryability,
+    /// source, structured cause and workflow site.
     #[must_use]
     pub fn wrap(mut self, context: impl fmt::Display) -> Self {
         self.message = Cow::Owned(format!("{context}: {}", self.message));
+        self
+    }
+
+    /// Replaces the human-readable message while keeping kind, retryability,
+    /// source, structured cause and workflow site.
+    pub(crate) fn with_message(mut self, message: impl Into<Cow<'static, str>>) -> Self {
+        self.message = message.into();
         self
     }
 
@@ -159,12 +499,18 @@ impl fmt::Display for Error {
 
 impl fmt::Debug for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Error")
-            .field("kind", &self.kind)
+        let mut s = f.debug_struct("Error");
+        s.field("kind", &self.kind)
             .field("message", &self.message)
             .field("retryable", &self.is_retryable())
-            .field("source", &self.source)
-            .finish_non_exhaustive()
+            .field("source", &self.source);
+        if let Some(cause) = &self.expr_cause {
+            s.field("expr_cause", cause);
+        }
+        if let Some(site) = &self.site {
+            s.field("site", site);
+        }
+        s.finish_non_exhaustive()
     }
 }
 
@@ -182,7 +528,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// record a task adds with the workflow's and the task's ids and the run's
 /// timestamp, keeping any the record already carries; a workflow's own
 /// failure carries no task id.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[non_exhaustive]
 pub struct ErrorRecord {
@@ -213,7 +559,32 @@ pub struct ErrorRecord {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub element_index: Option<usize>,
+    /// Structured expression diagnostics, carried in-memory for host reports
+    /// and omitted from the sanitized wire representation.
+    #[serde(skip)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub cause: Option<Arc<ExprCause>>,
+    /// Where in the workflow the error happened, carried in-memory for host
+    /// reports and omitted from the sanitized wire representation.
+    #[serde(skip)]
+    #[cfg_attr(feature = "ts", ts(skip))]
+    pub site: Option<Arc<ErrorSite>>,
 }
+
+impl PartialEq for ErrorRecord {
+    fn eq(&self, other: &Self) -> bool {
+        self.code == other.code
+            && self.message == other.message
+            && self.path == other.path
+            && self.workflow_id == other.workflow_id
+            && self.task_id == other.task_id
+            && self.timestamp == other.timestamp
+            && self.detail == other.detail
+            && self.element_index == other.element_index
+    }
+}
+
+impl Eq for ErrorRecord {}
 
 impl ErrorRecord {
     /// A record with a code and a message and nothing else.
@@ -227,7 +598,34 @@ impl ErrorRecord {
             timestamp: None,
             detail: None,
             element_index: None,
+            cause: None,
+            site: None,
         }
+    }
+
+    /// Structured expression diagnostics, when this record came from an
+    /// expression or a budget failure.
+    pub fn cause(&self) -> Option<&ExprCause> {
+        self.cause.as_deref()
+    }
+
+    /// Attaches structured expression diagnostics to this record.
+    #[must_use]
+    pub fn with_cause(mut self, cause: ExprCause) -> Self {
+        self.cause = Some(Arc::new(cause));
+        self
+    }
+
+    /// Where in the workflow this error happened, when known.
+    pub fn site(&self) -> Option<&ErrorSite> {
+        self.site.as_deref()
+    }
+
+    /// Attaches the workflow site where this error happened.
+    #[must_use]
+    pub fn with_site(mut self, site: ErrorSite) -> Self {
+        self.site = Some(Arc::new(site));
+        self
     }
 
     /// Fills what the record leaves unset: the workflow's id, the task's id
@@ -260,7 +658,10 @@ impl ErrorRecord {
 
 impl From<&Error> for ErrorRecord {
     fn from(error: &Error) -> Self {
-        Self::new(error.code(), error.message())
+        let mut record = Self::new(error.code(), error.message());
+        record.cause = error.expr_cause_arc();
+        record.site = error.site_arc();
+        record
     }
 }
 

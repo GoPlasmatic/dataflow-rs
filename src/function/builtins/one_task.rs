@@ -182,12 +182,17 @@ impl Task {
         let task_id: Arc<str> = Arc::from(workflow.tasks[0].id.as_str());
         let now: Arc<str> = Arc::from(NOW);
         let mut now_text = Some(Arc::clone(&now));
+        let budget = crate::run::TaskBudget::unlimited();
         let outcome = self.builtin().call(&mut SyncCtx {
             rc,
             exprs: workflow.registry.exprs(),
+            budget: &budget,
+            condition_error_policy: crate::run::ConditionErrorPolicy::Skip,
             payload,
             workflow_id: &workflow_id,
             task_id: &task_id,
+            task_path: &workflow.tasks[0].path,
+            loop_counter: None,
             capture,
             traced: false,
             changes,
@@ -200,7 +205,12 @@ impl Task {
         let error_code = outcome.as_ref().err().map(|e| e.code().to_owned());
         let decision = decide(workflow.calls[0].policy, &task_id, outcome);
         if let Some((code, message)) = decision.record {
-            errors.push(task_record(code, message, &workflow_id, &task_id, &now));
+            let mut rec = task_record(code, message, &workflow_id, &task_id, &now);
+            if let Some((cause, site)) = decision.meta {
+                rec.cause = cause;
+                rec.site = site;
+            }
+            errors.push(rec);
         }
         (decision.status, error_code)
     }

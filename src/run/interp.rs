@@ -30,6 +30,7 @@
 //! refuses, the engine's step as a sweep is entered or a loop exits, and,
 //! through the recorder, a workflow's own `Failed` step.
 
+use super::budget::{ConditionErrorPolicy, DispatchKind, TaskBudget};
 use super::cancel::{Limits, Stop};
 use super::error_context::ErrorContext;
 use super::fan_out::fan_out;
@@ -39,14 +40,17 @@ use super::observers::Observers;
 use super::policy::{self, Flow};
 use super::record::{self, Completed, TaskIds};
 use super::trace::Capture;
-use crate::base::{Change, Error, ErrorKind, ErrorRecord, Instant, ProgramId, TaskIx, WorkflowIx};
+use crate::base::{
+    AuthoredPath, Change, Error, ErrorKind, ErrorRecord, ErrorSite, ExprCause, Instant, ProgramId,
+    SiteKind, TaskIx, WorkflowIx,
+};
 use crate::def::WorkflowFailurePolicy;
 use crate::expr::path::kind;
 use crate::expr::{Expr, ExprEngine, Path};
 use crate::function::builtins::Builtin;
 use crate::function::{CallLayer, SyncCtx, eval, test};
 use crate::observe::{Event, Selection, StepResult, TraceStep};
-use crate::program::{CallSite, Callee, CompiledWorkflow, CondKind, LoopSite, Op};
+use crate::program::{CallSite, Callee, CompiledWorkflow, CondKind, CondSite, LoopSite, Op};
 use crate::state::{Owner, RunContext};
 use chrono::{DateTime, Utc};
 use datavalue::{DataValue, OwnedDataValue};
@@ -124,6 +128,10 @@ pub(crate) struct RunEnv<'r, 'p> {
     pub(crate) layers: &'r [Arc<dyn CallLayer>],
     /// The run's deadline and token.
     pub(crate) limits: Limits<'r>,
+    /// How condition evaluation errors are handled during this run.
+    pub(crate) condition_error_policy: ConditionErrorPolicy,
+    /// Shared task and expression op budget tracker for this run.
+    pub(crate) budget: &'r TaskBudget<'r>,
     /// The ops the run has begun while a limit is set, across its
     /// workflows: every [`CHECK_EVERY`]th checks the limits.
     pub(crate) ops: u32,
@@ -386,7 +394,41 @@ pub(crate) async fn run_workflow<'p>(
                 kind,
                 else_to,
             } => {
-                let passed = test(rc, env.exprs, &wf.conds[cond as usize].expr);
+                let cond_site = &wf.conds[cond as usize];
+                let passed = test(rc, env.exprs, env.budget, &cond_site.expr)
+                    .map_err(|e| attach_cond_site(env, cond_site, kind, e));
+                if env.condition_error_policy == ConditionErrorPolicy::Stop
+                    && let Err(e) = passed
+                {
+                    match kind {
+                        CondKind::Workflow => {
+                            if env.frame.in_sweep(wf) {
+                                env.frame.sweeps -= 1;
+                            }
+                            if std::mem::take(&mut unjudged) {
+                                selection = Selection::ConditionFailed(e.clone());
+                            }
+                            record::workflow_failure(env, &e);
+                        }
+                        CondKind::Group => {
+                            record::workflow_failure(env, &e);
+                        }
+                        CondKind::Task => {
+                            if let Some(Op::Call { site, .. } | Op::FanOut { site, .. }) =
+                                wf.ops.get(pc + 1)
+                            {
+                                record::task_condition_failure(
+                                    env,
+                                    wf.calls[*site as usize].task,
+                                    &e,
+                                );
+                            } else {
+                                record::workflow_failure(env, &e);
+                            }
+                        }
+                    }
+                    break Exit::Stopped(e);
+                }
                 let admitted = matches!(passed, Ok(true));
                 if kind == CondKind::Workflow {
                     if !admitted && env.frame.in_sweep(wf) {
@@ -409,7 +451,7 @@ pub(crate) async fn run_workflow<'p>(
                         };
                     }
                 } else if !admitted && env.watch.trace.is_some() {
-                    skipped_calls(env, wf, kind, pc, else_to);
+                    skipped_calls(env, wf, kind, pc, else_to, passed.as_ref().err());
                 }
                 if admitted {
                     Flow::Next
@@ -446,6 +488,7 @@ pub(crate) async fn run_workflow<'p>(
             Flow::Jump(to) => to as usize,
             Flow::Halt => break Exit::Halted,
             Flow::Stop(e) => break Exit::Limited(e),
+            Flow::Abort(e) => break Exit::Stopped(e),
             Flow::Fail(e) => match wf.on_failure {
                 WorkflowFailurePolicy::Continue => {
                     env.failed = true;
@@ -494,6 +537,37 @@ fn skipped_workflow(env: &mut RunEnv<'_, '_>, error: Option<&Error>) {
     env.push_step(step);
 }
 
+/// Attaches an [`ErrorSite`] to a condition evaluation error.
+fn attach_cond_site(
+    env: &RunEnv<'_, '_>,
+    cond_site: &CondSite,
+    kind: CondKind,
+    error: Error,
+) -> Error {
+    let site_kind = match kind {
+        CondKind::Workflow => SiteKind::WorkflowCondition,
+        CondKind::Group => SiteKind::GroupCondition,
+        CondKind::Task => SiteKind::TaskCondition,
+    };
+    let step_arc = cond_site.step.as_deref().map(Arc::<str>::from);
+    let (task_id, group_id) = match kind {
+        CondKind::Workflow => (None, None),
+        CondKind::Group => (None, step_arc),
+        CondKind::Task => (step_arc, None),
+    };
+    error.with_site(ErrorSite {
+        kind: site_kind,
+        workflow_id: Arc::clone(env.workflow_id),
+        task_id,
+        group_id,
+        rule_index: None,
+        mapping_index: None,
+        target_path: None,
+        authored_path: Some(cond_site.path.clone()),
+        loop_counter: env.frame.loop_counter,
+    })
+}
+
 /// The `Skipped` steps of what a group's or a task's condition at `pc`
 /// refused: one per call in the group's span, `pc + 1 .. else_to`, or the
 /// task's one call, at `pc + 1`, in the sweep the frame is in.
@@ -503,6 +577,7 @@ fn skipped_calls(
     kind: CondKind,
     pc: usize,
     else_to: u32,
+    error: Option<&Error>,
 ) {
     let span = match kind {
         CondKind::Group => wf.ops.get(pc + 1..else_to as usize),
@@ -511,7 +586,17 @@ fn skipped_calls(
     };
     for op in span.unwrap_or_default() {
         if let Op::Call { site, .. } | Op::FanOut { site, .. } = *op {
-            let step = env.task_step(wf.calls[site as usize].task, StepResult::Skipped);
+            let task = wf.calls[site as usize].task;
+            let mut step = env.task_step(task, StepResult::Skipped);
+            if let Some(e) = error {
+                let mut record = ErrorRecord::from(e);
+                let ids = env.ids(task);
+                let workflow_id = Arc::clone(ids.workflow);
+                let task_id = Arc::clone(ids.task);
+                let now = env.now_text();
+                record.stamp(&workflow_id, Some(&task_id), now, None);
+                step.errors.push(record);
+            }
             env.push_step(step);
         }
     }
@@ -529,12 +614,34 @@ fn loop_init<'p>(
     exit_to: u32,
 ) -> Flow {
     if let Some(over) = &site.over {
-        match elements(rc, env.exprs, over, Over::Loop(env.workflow_id)) {
+        let over_site = ErrorSite {
+            kind: SiteKind::LoopOver,
+            workflow_id: Arc::clone(env.workflow_id),
+            task_id: None,
+            group_id: None,
+            rule_index: None,
+            mapping_index: None,
+            target_path: None,
+            authored_path: Some(AuthoredPath::root().join("loop").join("over")),
+            loop_counter: None,
+        };
+        match elements(
+            rc,
+            env.exprs,
+            env.budget,
+            over,
+            Over::Loop(env.workflow_id),
+            over_site,
+        ) {
             // A loop moves each element out: its own copy.
             Ok(items) => env.frame.items = Some(items.into_owned()),
             Err(e) => {
                 record::workflow_failure(env, &e);
-                return Flow::Fail(e);
+                return if *e.kind() == ErrorKind::Budget && env.budget.is_run_limited() {
+                    Flow::Abort(e)
+                } else {
+                    Flow::Fail(e)
+                };
             }
         }
     }
@@ -606,6 +713,30 @@ fn enter<'p>(
         }
         return flow;
     }
+    let _guard = match env.budget.charge_dispatch(DispatchKind::LoopStep {
+        workflow_id: env.workflow_id,
+        iteration: u64::from(env.frame.sweeps),
+    }) {
+        Ok(guard) => guard,
+        Err(e) => {
+            if site.counter.is_some() {
+                sweep_step(env, counter, changes);
+            }
+            let e = e.with_site(ErrorSite {
+                kind: SiteKind::LoopOver,
+                workflow_id: Arc::clone(env.workflow_id),
+                task_id: None,
+                group_id: None,
+                rule_index: None,
+                mapping_index: None,
+                target_path: None,
+                authored_path: Some(AuthoredPath::root().join("loop")),
+                loop_counter: Some(counter),
+            });
+            record::workflow_failure(env, &e);
+            return Flow::Abort(e);
+        }
+    };
     if let Some(item) = element.and_then(|i| env.frame.items.as_mut()?.get_mut(i)) {
         // Moved, not cloned: `increment >= 1` visits no element twice.
         let item = std::mem::take(item);
@@ -687,14 +818,14 @@ impl fmt::Display for Over<'_> {
 pub(super) fn elements<'e>(
     rc: &mut RunContext<'_, '_>,
     exprs: &ExprEngine,
+    budget: &TaskBudget<'_>,
     over: &'e Expr,
     owner: Over<'_>,
+    site: ErrorSite,
 ) -> Result<Cow<'e, [OwnedDataValue]>, Error> {
-    let value = eval(rc, exprs, over).map_err(|e| {
-        Error::new(
-            e.kind().clone(),
-            format!("{owner} failed to evaluate: {}", e.record_text()),
-        )
+    let value = eval(rc, exprs, budget, over).map_err(|e| {
+        let msg = format!("{owner} failed to evaluate: {}", e.record_text());
+        e.with_message(msg).with_site(site.clone())
     })?;
     match value {
         Cow::Owned(OwnedDataValue::Array(items)) => Ok(Cow::Owned(items)),
@@ -702,7 +833,9 @@ pub(super) fn elements<'e>(
         other => Err(Error::new(
             ErrorKind::Eval,
             format!("{owner} must evaluate to an array, got {}", kind(&other)),
-        )),
+        )
+        .with_expr_cause(ExprCause::type_mismatch(None))
+        .with_site(site)),
     }
 }
 
@@ -718,6 +851,31 @@ fn call<'p>(
     let errors_before = env.errors.len();
     let workflow_id = env.workflow_id;
     let task_id = &env.task_ids[site.task as usize];
+    let meta = &wf.tasks[site.task as usize];
+    let task_site = |loop_counter: Option<i64>| ErrorSite {
+        kind: SiteKind::Task,
+        workflow_id: Arc::clone(workflow_id),
+        task_id: Some(Arc::clone(task_id)),
+        group_id: None,
+        rule_index: None,
+        mapping_index: None,
+        target_path: None,
+        authored_path: Some(meta.path.clone()),
+        loop_counter,
+    };
+    let guard = match env.budget.charge_dispatch(DispatchKind::InlineBuiltin {
+        workflow_id: &wf.id,
+        task_id: &meta.id,
+        function: &meta.function,
+    }) {
+        Ok(guard) => guard,
+        Err(e) => {
+            let e = e.with_site(task_site(env.frame.loop_counter));
+            let decision = policy::forced_abort(env.ids(site.task).task, e);
+            let done = Completed::new(env, site.task, None, None, errors_before, false);
+            return record::record(rc, env, wf, done, decision);
+        }
+    };
     // An unwatched run neither traces nor times a call.
     let (traced, started) = if env.capture.is_watched() {
         (env.traces_changes(), env.watch.timed.then(record::now))
@@ -733,9 +891,13 @@ fn call<'p>(
     let mut cx = SyncCtx {
         rc: &mut *rc,
         exprs: env.exprs,
+        budget: env.budget,
+        condition_error_policy: env.condition_error_policy,
         payload: env.payload,
         workflow_id,
         task_id,
+        task_path: &meta.path,
+        loop_counter: env.frame.loop_counter,
         capture: env.capture.captures(),
         traced,
         changes: &mut env.changes,
@@ -747,6 +909,7 @@ fn call<'p>(
     };
     let result = builtin.call(&mut cx);
     let mut marked = cx.marked;
+    drop(guard);
     let elapsed = started.map(record::since);
     // An `Err` records no changes for the audit, as v3's recorder drops
     // them. Its writes stand, so a trace that keeps changes keeps them, for
@@ -761,7 +924,23 @@ fn call<'p>(
             env.changes.clear();
         }
     }
-    let decision = policy::decide(site.policy, env.ids(site.task).task, result);
+    let decision = match result {
+        Err(mut e) => {
+            if e.site().is_none() {
+                e = e.with_site(task_site(env.frame.loop_counter));
+            }
+            let force_stop = (env.condition_error_policy == ConditionErrorPolicy::Stop
+                && e.site()
+                    .is_some_and(|s| s.kind == SiteKind::FilterCondition))
+                || (*e.kind() == ErrorKind::Budget && env.budget.is_run_limited());
+            if force_stop {
+                policy::forced_abort(env.ids(site.task).task, e)
+            } else {
+                policy::decide(site.policy, env.ids(site.task).task, Err(e))
+            }
+        }
+        Ok(outcome) => policy::decide(site.policy, env.ids(site.task).task, Ok(outcome)),
+    };
     let done = Completed::new(env, site.task, None, elapsed, errors_before, marked);
     record::record(rc, env, wf, done, decision)
 }

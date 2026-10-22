@@ -73,6 +73,8 @@ pub(crate) struct CondSite {
     pub(crate) expr: Expr,
     /// The group's or task's id; `None` for the workflow's.
     pub(crate) step: Option<String>,
+    /// The authored JSON location of the condition expression.
+    pub(crate) path: AuthoredPath,
 }
 
 /// One task's call: what it calls and what its outcome does.

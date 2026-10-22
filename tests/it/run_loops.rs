@@ -782,3 +782,115 @@ fn the_run_future_is_send() {
     let opts = RunOptions::default();
     assert_send(&e.run_with(&mut msg, &opts));
 }
+
+#[tokio::test]
+async fn loop_steps_are_charged_against_task_budget_and_loop_condition_sets_loop_counter_site() {
+    use dataflow_rs::run::{
+        ConditionErrorPolicy, DispatchKind, OccupancyGuard, RunAccountant, SiteKind,
+    };
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct LoopAccountant {
+        kinds: Mutex<Vec<String>>,
+    }
+
+    impl RunAccountant for LoopAccountant {
+        fn before_task_dispatch(
+            &self,
+            kind: DispatchKind<'_>,
+        ) -> dataflow_rs::Result<OccupancyGuard<'_>> {
+            let tag = match kind {
+                DispatchKind::LoopStep {
+                    workflow_id,
+                    iteration,
+                } => {
+                    format!("loop:{workflow_id}:{iteration}")
+                }
+                DispatchKind::InlineBuiltin {
+                    workflow_id,
+                    task_id,
+                    function,
+                } => {
+                    format!("builtin:{workflow_id}:{task_id}:{function}")
+                }
+                _ => format!("{kind:?}"),
+            };
+            self.kinds.lock().unwrap().push(tag);
+            Ok(OccupancyGuard::noop())
+        }
+    }
+
+    let e = build(&[looping(
+        "w",
+        0,
+        json!({"counter": "i", "max": 3}),
+        vec![append("t", "data.seen", var("temp_data.i"))],
+    )])
+    .unwrap();
+
+    // 3 sweeps: each sweep charges `LoopStep` then `InlineBuiltin`.
+    let acc = LoopAccountant::default();
+    let mut m = message(json!({}));
+    let report = e
+        .run_with(&mut m, &RunOptions::default().accountant(&acc))
+        .await;
+    assert!(matches!(report.status(), RunStatus::Completed));
+    assert_eq!(
+        *acc.kinds.lock().unwrap(),
+        vec![
+            "loop:w:0",
+            "builtin:w:t:map",
+            "loop:w:1",
+            "builtin:w:t:map",
+            "loop:w:2",
+            "builtin:w:t:map",
+        ]
+    );
+
+    // `with_task_budget(3)` allows sweep 0 (`LoopStep` + `InlineBuiltin`) and
+    // sweep 1's `LoopStep`, then stops before sweep 1's `InlineBuiltin`.
+    let mut m = message(json!({}));
+    let report = e
+        .run_with(&mut m, &RunOptions::default().with_task_budget(3))
+        .await;
+    let RunStatus::Stopped(err) = report.status() else {
+        panic!("expected Stopped on task_budget in loop: {report:?}");
+    };
+    assert_eq!(err.code(), "BUDGET_EXCEEDED");
+    assert_eq!(m.to_json()["context"]["data"]["seen"], json!([0]));
+
+    // Loop condition failing on sweep 1 attaches `SiteKind::WorkflowCondition` with `loop_counter == Some(1)`.
+    let wf_cond_err = with(
+        looping(
+            "w",
+            0,
+            json!({"counter": "i", "max": 3}),
+            vec![append("t", "data.seen", var("temp_data.i"))],
+        ),
+        &[(
+            "condition",
+            json!({
+                "if": [
+                    {"==": [var("temp_data.i"), 1]},
+                    {"/": [1, var("data.zero")]},
+                    true
+                ]
+            }),
+        )],
+    );
+    let e_cond = build(&[wf_cond_err]).unwrap();
+    let mut m = message(json!({"zero": 0}));
+    let report = e_cond
+        .run_with(
+            &mut m,
+            &RunOptions::default().condition_error_policy(ConditionErrorPolicy::Stop),
+        )
+        .await;
+    let RunStatus::Stopped(err) = report.status() else {
+        panic!("expected Stopped on loop condition error: {report:?}");
+    };
+    let site = err.site().expect("loop condition error carries site");
+    assert_eq!(site.kind, SiteKind::WorkflowCondition);
+    assert_eq!(site.loop_counter, Some(1));
+}

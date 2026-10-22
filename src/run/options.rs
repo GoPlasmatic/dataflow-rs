@@ -1,5 +1,6 @@
 //! The options of one run.
 
+use super::budget::{ConditionErrorPolicy, RunAccountant};
 use super::message::AuditMode;
 use crate::base::{CancelToken, Instant};
 use crate::function::CallLayer;
@@ -58,6 +59,20 @@ pub struct RunOptions<'a> {
     ///
     /// [`Run::trace`]: crate::Run::trace()
     pub trace: Option<TraceOptions>,
+    /// How condition evaluation errors are handled during this run; `None`
+    /// inherits the engine's [`EngineConfig::condition_error_policy`](super::EngineConfig::condition_error_policy)
+    /// (which defaults to [`ConditionErrorPolicy::Skip`]).
+    pub condition_error_policy: Option<ConditionErrorPolicy>,
+    /// Maximum number of task dispatches (inline built-ins, host calls, loop
+    /// sweeps, and `for_each` elements) permitted during this run; `None` by
+    /// default.
+    pub task_budget: Option<u64>,
+    /// Maximum cumulative datalogic operations permitted across all
+    /// expressions evaluated during this run; `None` by default.
+    pub expr_ops_budget: Option<u64>,
+    /// Host-owned accounting and admission hook for this run; `None` by
+    /// default.
+    pub accountant: Option<&'a dyn RunAccountant>,
 }
 
 impl RunOptions<'static> {
@@ -72,6 +87,10 @@ impl RunOptions<'static> {
         layers: &[],
         observer: None,
         trace: None,
+        condition_error_policy: None,
+        task_budget: None,
+        expr_ops_budget: None,
+        accountant: None,
     };
 }
 
@@ -89,8 +108,8 @@ impl fmt::Debug for RunOptions<'_> {
         } else {
             "absent"
         };
-        f.debug_struct("RunOptions")
-            .field("channel", &self.channel)
+        let mut s = f.debug_struct("RunOptions");
+        s.field("channel", &self.channel)
             .field("routing_bucket", &self.routing_bucket)
             .field("capture_changes", &self.capture_changes)
             .field("audit", &self.audit)
@@ -98,8 +117,20 @@ impl fmt::Debug for RunOptions<'_> {
             .field("cancel", &self.cancel)
             .field("layers", &self.layers.len())
             .field("observer", &format_args!("{observer}"))
-            .field("trace", &self.trace)
-            .finish()
+            .field("trace", &self.trace);
+        if let Some(policy) = &self.condition_error_policy {
+            s.field("condition_error_policy", policy);
+        }
+        if let Some(budget) = &self.task_budget {
+            s.field("task_budget", budget);
+        }
+        if let Some(budget) = &self.expr_ops_budget {
+            s.field("expr_ops_budget", budget);
+        }
+        if self.accountant.is_some() {
+            s.field("accountant", &format_args!("present"));
+        }
+        s.finish()
     }
 }
 
@@ -169,6 +200,59 @@ impl<'a> RunOptions<'a> {
     pub fn trace(mut self, opts: TraceOptions) -> Self {
         self.trace = Some(opts);
         self
+    }
+
+    /// Sets how condition evaluation errors are handled during this run.
+    #[must_use]
+    pub fn condition_error_policy(mut self, policy: ConditionErrorPolicy) -> Self {
+        self.condition_error_policy = Some(policy);
+        self
+    }
+
+    /// Alias for [`Self::condition_error_policy`].
+    #[must_use]
+    pub fn with_condition_error_policy(self, policy: ConditionErrorPolicy) -> Self {
+        self.condition_error_policy(policy)
+    }
+
+    /// Sets the maximum number of task dispatches permitted during this run.
+    #[must_use]
+    pub fn task_budget(mut self, max_tasks: u64) -> Self {
+        self.task_budget = Some(max_tasks);
+        self
+    }
+
+    /// Alias for [`Self::task_budget`].
+    #[must_use]
+    pub fn with_task_budget(self, max_tasks: u64) -> Self {
+        self.task_budget(max_tasks)
+    }
+
+    /// Sets the maximum cumulative datalogic operations permitted across all
+    /// expressions evaluated during this run.
+    #[must_use]
+    pub fn expr_ops_budget(mut self, max_ops: u64) -> Self {
+        self.expr_ops_budget = Some(max_ops);
+        self
+    }
+
+    /// Alias for [`Self::expr_ops_budget`].
+    #[must_use]
+    pub fn with_expr_ops_budget(self, max_ops: u64) -> Self {
+        self.expr_ops_budget(max_ops)
+    }
+
+    /// Attaches a host-owned [`RunAccountant`] to this run.
+    #[must_use]
+    pub fn accountant(mut self, accountant: &'a dyn RunAccountant) -> Self {
+        self.accountant = Some(accountant);
+        self
+    }
+
+    /// Alias for [`Self::accountant`].
+    #[must_use]
+    pub fn with_accountant(self, accountant: &'a dyn RunAccountant) -> Self {
+        self.accountant(accountant)
     }
 }
 

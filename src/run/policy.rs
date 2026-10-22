@@ -11,11 +11,15 @@
 //! the halting policies apply once, to the whole fan-out.
 
 use super::cancel::Stop;
-use crate::base::{Error, Result, TASK_ERROR, TASK_STATUS_ERROR};
+use crate::base::{Error, ErrorSite, ExprCause, Result, TASK_ERROR, TASK_STATUS_ERROR};
 use crate::def::{FailurePolicy, RejectionPolicy};
 use crate::function::Outcome;
 pub(crate) use crate::program::Policy;
 use std::borrow::Cow;
+use std::sync::Arc;
+
+/// Optional structured cause and site metadata carried alongside an error record.
+pub(crate) type RecordMeta = (Option<Arc<ExprCause>>, Option<Arc<ErrorSite>>);
 
 /// The status a `Halt` records, as v3's `HALT_STATUS_CODE`.
 pub(crate) const HALT_STATUS: u16 = 299;
@@ -31,6 +35,9 @@ pub(crate) enum Flow {
     Halt,
     /// The failure goes to the workflow's `on_failure`.
     Fail(Error),
+    /// The failure stops the run immediately (`RunStatus::Stopped`),
+    /// bypassing `on_failure = "continue"` on both the task and the workflow.
+    Abort(Error),
     /// The run ends, whatever the policies: its deadline passed or its
     /// token was cancelled.
     Stop(Stop),
@@ -43,6 +50,8 @@ pub(crate) struct Decision {
     pub(crate) status: Option<u16>,
     /// What `message.errors()` gains: (code, message).
     pub(crate) record: Option<(Cow<'static, str>, String)>,
+    /// Structured cause and site metadata for `record`, when present.
+    pub(crate) meta: Option<RecordMeta>,
     pub(crate) flow: Flow,
 }
 
@@ -122,23 +131,24 @@ fn error_record(task_id: &str, error: &Error) -> (Cow<'static, str>, String) {
 /// | `Ok(Status(s))`, `s ≥ 500` | `s` | `TASK_STATUS_ERROR` | `on_failure`, failing with `TASK_ERROR` |
 /// | `Err(e)` | 500 | `e`'s code | `on_failure`, failing with `e` |
 pub(crate) fn decide(policy: Policy, task_id: &str, result: Result<Outcome>) -> Decision {
-    let (status, record, flow) = match result {
+    let (status, record, meta, flow) = match result {
         Ok(Outcome::Skip) => {
             return Decision {
                 status: None,
                 record: None,
+                meta: None,
                 flow: Flow::Next,
             };
         }
-        Ok(Outcome::Ok) => (200, None, Flow::Next),
-        Ok(Outcome::Halt) => (HALT_STATUS, None, Flow::Halt),
-        Ok(Outcome::Status(s)) if s < 400 => (s, None, Flow::Next),
+        Ok(Outcome::Ok) => (200, None, None, Flow::Next),
+        Ok(Outcome::Halt) => (HALT_STATUS, None, None, Flow::Halt),
+        Ok(Outcome::Status(s)) if s < 400 => (s, None, None, Flow::Next),
         Ok(Outcome::Status(s)) if s < 500 => {
             let flow = match policy.on_rejection {
                 RejectionPolicy::Continue => Flow::Next,
                 RejectionPolicy::Halt => Flow::Halt,
             };
-            (s, None, flow)
+            (s, None, None, flow)
         }
         Ok(Outcome::Status(s)) => {
             let record = (
@@ -148,11 +158,12 @@ pub(crate) fn decide(policy: Policy, task_id: &str, result: Result<Outcome>) -> 
             let flow = on_failure(policy.on_failure, || {
                 Error::service(TASK_ERROR, format!("Task {task_id} failed with status {s}"))
             });
-            (s, Some(record), flow)
+            (s, Some(record), None, flow)
         }
         Err(e) => {
             let record = error_record(task_id, &e);
-            (500, Some(record), on_failure(policy.on_failure, || e))
+            let meta = Some((e.expr_cause_arc(), e.site_arc()));
+            (500, Some(record), meta, on_failure(policy.on_failure, || e))
         }
     };
     // `terminal` upgrades a `Next` and nothing else: a failure still fails.
@@ -163,7 +174,22 @@ pub(crate) fn decide(policy: Policy, task_id: &str, result: Result<Outcome>) -> 
     Decision {
         status: Some(status),
         record,
+        meta,
         flow,
+    }
+}
+
+/// What a call that must fail-close the run immediately (such as a `filter`
+/// condition failure under `ConditionErrorPolicy::Stop`, or an exceeded
+/// run-level task/ops budget) records and does, bypassing `on_failure`.
+pub(crate) fn forced_abort(task_id: &str, error: Error) -> Decision {
+    let record = error_record(task_id, &error);
+    let meta = Some((error.expr_cause_arc(), error.site_arc()));
+    Decision {
+        status: Some(500),
+        record: Some(record),
+        meta,
+        flow: Flow::Abort(error),
     }
 }
 
@@ -175,6 +201,7 @@ pub(crate) fn cut_short(task_id: &str, stop: Stop, error: &Error) -> Decision {
     Decision {
         status: Some(500),
         record: Some(error_record(task_id, error)),
+        meta: Some((error.expr_cause_arc(), error.site_arc())),
         flow: Flow::Stop(stop),
     }
 }
@@ -221,7 +248,9 @@ mod tests {
         match flow {
             Flow::Next => Shape::Next,
             Flow::Halt => Shape::Halt,
-            Flow::Fail(e) => Shape::Fail(e.code().to_owned(), e.message().to_owned()),
+            Flow::Fail(e) | Flow::Abort(e) => {
+                Shape::Fail(e.code().to_owned(), e.message().to_owned())
+            }
             Flow::Jump(_) | Flow::Stop(_) => panic!("decide never jumps or stops"),
         }
     }

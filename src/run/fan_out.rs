@@ -34,14 +34,15 @@
 //! of an `over` with nothing to call the time from its evaluation to its
 //! record, as v3's.
 
+use super::budget::{DispatchKind, OccupancyGuard};
 use super::host::{CallResult, Invoked, Layers, Settled, call_start, invoke, keep_records, settle};
 use super::interp::{Over, RunEnv, elements};
 use super::policy::{self, Decision, Flow, Policy, decide};
 use super::record::{self, Completed};
-use crate::base::{Change, Error, ErrorKind};
+use crate::base::{Change, Error, ErrorKind, ErrorSite, SiteKind};
 use crate::expr::path::MAX_PATH_SEGMENTS;
 use crate::expr::{MAX_ARRAY_INDEX, Path, Seg};
-use crate::function::{Binding, BoundCall, CallInfo, CallStart, Outcome};
+use crate::function::{Binding, BoundCall, CallInfo, CallStart, Outcome, Overlay};
 use crate::program::{CallSite, CompiledWorkflow, FanSite};
 use crate::state::RunContext;
 use datavalue::OwnedDataValue;
@@ -60,13 +61,28 @@ struct Element {
 impl Element {
     /// An element's call, once it returned without being cut short, decided
     /// under `policy`.
-    fn new(mut invoked: Invoked, policy: Policy, task_id: &str) -> Self {
-        let result = match &mut invoked.result {
-            CallResult::Returned(Ok(outcome)) => Ok(*outcome),
-            CallResult::Returned(Err(e)) => Err(std::mem::replace(e, Error::service("", ""))),
+    fn new(
+        mut invoked: Invoked,
+        policy: Policy,
+        task_id: &str,
+        run_limited: bool,
+        task_site: &ErrorSite,
+    ) -> Self {
+        let decision = match &mut invoked.result {
+            CallResult::Returned(Ok(outcome)) => decide(policy, task_id, Ok(*outcome)),
+            CallResult::Returned(Err(e)) => {
+                let mut err = std::mem::replace(e, Error::service("", ""));
+                if err.site().is_none() {
+                    err = err.with_site(task_site.clone());
+                }
+                if *err.kind() == ErrorKind::Budget && run_limited {
+                    policy::forced_abort(task_id, err)
+                } else {
+                    decide(policy, task_id, Err(err))
+                }
+            }
             CallResult::CutShort(..) => unreachable!("a call cut short breaks out before Element"),
         };
-        let decision = decide(policy, task_id, result);
         Self { invoked, decision }
     }
 
@@ -74,7 +90,10 @@ impl Element {
     /// per-element policy: no new call starts after it, and the fold stops
     /// after it.
     fn stops(&self) -> bool {
-        matches!(self.decision.flow, Flow::Fail(_) | Flow::Halt)
+        matches!(
+            self.decision.flow,
+            Flow::Fail(_) | Flow::Abort(_) | Flow::Halt
+        )
     }
 }
 
@@ -93,6 +112,7 @@ async fn call_element<'r>(
     layers: Layers<'r>,
     timed: bool,
     timers: bool,
+    _guard: OccupancyGuard<'r>,
 ) -> (usize, Invoked) {
     let binding = Binding {
         item: &fan.r#as,
@@ -166,9 +186,33 @@ pub(crate) async fn fan_out<'p>(
     bound: &'p dyn BoundCall,
 ) -> Flow {
     let task_id = env.ids(site.task).task;
+    let meta = &wf.tasks[site.task as usize];
     let policy = site.policy;
-    let over = elements(rc, env.exprs, &fan.over, Over::FanOut(task_id))
-        .and_then(|items| fits_into(fan, task_id, items));
+    let over_site = ErrorSite {
+        kind: SiteKind::ForEachOver,
+        workflow_id: Arc::clone(env.workflow_id),
+        task_id: Some(Arc::clone(task_id)),
+        group_id: None,
+        rule_index: None,
+        mapping_index: None,
+        target_path: None,
+        authored_path: Some(meta.path.join("for_each").join("over")),
+        loop_counter: env.frame.loop_counter,
+    };
+    let task_site = ErrorSite {
+        kind: SiteKind::Task,
+        authored_path: Some(meta.path.clone()),
+        ..over_site.clone()
+    };
+    let over = elements(
+        rc,
+        env.exprs,
+        env.budget,
+        &fan.over,
+        Over::FanOut(task_id),
+        over_site,
+    )
+    .and_then(|items| fits_into(fan, task_id, items));
     let items = match over {
         Ok(items) if !items.is_empty() => items,
         // Nothing to call: an empty array completes the task, anything else
@@ -189,7 +233,12 @@ pub(crate) async fn fan_out<'p>(
                 }
                 Outcome::Ok
             });
-            let decision = decide(policy, task_id, result);
+            let decision = match result {
+                Err(e) if *e.kind() == ErrorKind::Budget && env.budget.is_run_limited() => {
+                    policy::forced_abort(task_id, e)
+                }
+                other => decide(policy, task_id, other),
+            };
             let done = Completed::new(
                 env,
                 site.task,
@@ -204,6 +253,7 @@ pub(crate) async fn fan_out<'p>(
 
     let n = items.len();
     let per_element = policy.per_element();
+    let run_limited = env.budget.is_run_limited();
     let mut finished: Vec<Option<Element>> = (0..n).map(|_| None).collect();
     // The first call the run's limits cut short: its index, the records it
     // added, its error and how long it ran. The fan-out folds nothing then.
@@ -221,6 +271,29 @@ pub(crate) async fn fan_out<'p>(
                 let Some((index, item)) = pending.next() else {
                     break;
                 };
+                let guard = match env.budget.charge_dispatch(DispatchKind::ForEachElement {
+                    workflow_id: &wf.id,
+                    task_id: &meta.id,
+                    index,
+                }) {
+                    Ok(guard) => guard,
+                    Err(e) => {
+                        let e = e.with_site(task_site.clone());
+                        finished[index] = Some(Element {
+                            invoked: Invoked {
+                                result: CallResult::Returned(Err(Error::service("", ""))),
+                                overlay: Overlay::default(),
+                                changes: Vec::new(),
+                                errors: Vec::new(),
+                                collected: None,
+                                elapsed: None,
+                            },
+                            decision: policy::forced_abort(task_id, e),
+                        });
+                        stop = true;
+                        break;
+                    }
+                };
                 in_flight.push(call_element(
                     start,
                     fan,
@@ -230,6 +303,7 @@ pub(crate) async fn fan_out<'p>(
                     layers,
                     env.watch.timed,
                     env.limits.timers,
+                    guard,
                 ));
             }
             let Some((index, invoked)) = in_flight.next().await else {
@@ -240,7 +314,7 @@ pub(crate) async fn fan_out<'p>(
                 cut = Some((index, invoked.errors, stop, error, invoked.elapsed));
                 break;
             }
-            let element = Element::new(invoked, per_element, task_id);
+            let element = Element::new(invoked, per_element, task_id, run_limited, &task_site);
             stop |= element.stops();
             finished[index] = Some(element);
         }
@@ -329,7 +403,7 @@ pub(crate) async fn fan_out<'p>(
         let flow = record::record(rc, env, wf, done, decision);
         rc.tick();
         match flow {
-            flow @ (Flow::Fail(_) | Flow::Stop(_)) => return flow,
+            flow @ (Flow::Fail(_) | Flow::Abort(_) | Flow::Stop(_)) => return flow,
             Flow::Halt => {
                 halted = true;
                 break;

@@ -3,8 +3,7 @@
 use super::config::ValueKind;
 use super::path::Path;
 use super::rules::Shape;
-use super::walk::reads_secret;
-use crate::base::{Error, ErrorKind};
+use crate::base::{Error, ErrorKind, ExprCause};
 use datalogic_rs::Logic;
 use datavalue::{DataValue, NumberValue, OwnedDataValue};
 use serde_json::Value;
@@ -39,10 +38,18 @@ pub(crate) mod sealed {
         /// The compiled logic.
         fn logic(&self, _: Crate) -> &Logic;
 
+        /// Whether the expression reads a secret anywhere.
+        fn reads_secret(&self, _: Crate) -> bool;
+
         /// An evaluation's result as the expression's type, then as an
         /// owned value: the `Eval` error naming the expression when it is
         /// not of that type.
-        fn value_of(&self, view: &DataValue<'_>, _: Crate) -> crate::Result<OwnedDataValue>;
+        fn value_of(
+            &self,
+            view: &DataValue<'_>,
+            ops: Option<u64>,
+            _: Crate,
+        ) -> crate::Result<OwnedDataValue>;
     }
 }
 
@@ -293,6 +300,7 @@ pub struct Expr<T: FromValue = OwnedDataValue> {
     pub(super) raw: Value,
     pub(super) logic: Logic,
     pub(super) constant: Option<T>,
+    pub(super) reads_secret: bool,
 }
 
 /// `raw` as compact JSON, truncated at 120 characters so arbitrarily large
@@ -332,18 +340,24 @@ impl<T: FromValue> Expr<T> {
         &self.logic
     }
 
+    /// Whether the expression reads a secret anywhere.
+    pub(crate) fn reads_secret(&self) -> bool {
+        self.reads_secret
+    }
+
     /// An evaluation's result as a `T`, or the [`ErrorKind::Eval`] error
-    /// naming this expression. The reason names only the value's kind, and an
+    /// naming this expression, with `ops_spent` attached to its structured
+    /// [`ExprCause`]. The reason names only the value's kind, and an
     /// expression that reads a secret gives only the type it expected.
-    pub(crate) fn convert(&self, view: &DataValue<'_>) -> crate::Result<T> {
+    pub(crate) fn convert(&self, view: &DataValue<'_>, ops: Option<u64>) -> crate::Result<T> {
         T::from_view(view).map_err(|why| {
             let shown = snippet(&self.raw);
-            let message = if reads_secret(&self.raw) {
+            let message = if self.reads_secret {
                 format!("`{shown}` did not give {}", T::type_name())
             } else {
                 format!("`{shown}` did not give {}: {why}", T::type_name())
             };
-            Error::new(ErrorKind::Eval, message)
+            Error::new(ErrorKind::Eval, message).with_expr_cause(ExprCause::type_mismatch(ops))
         })
     }
 }
@@ -391,7 +405,16 @@ impl<T: FromValue> sealed::SealedExpr for Expr<T> {
         &self.logic
     }
 
-    fn value_of(&self, view: &DataValue<'_>, _: sealed::Crate) -> crate::Result<OwnedDataValue> {
-        self.convert(view).map(T::into_value)
+    fn reads_secret(&self, _: sealed::Crate) -> bool {
+        self.reads_secret
+    }
+
+    fn value_of(
+        &self,
+        view: &DataValue<'_>,
+        ops: Option<u64>,
+        _: sealed::Crate,
+    ) -> crate::Result<OwnedDataValue> {
+        self.convert(view, ops).map(T::into_value)
     }
 }

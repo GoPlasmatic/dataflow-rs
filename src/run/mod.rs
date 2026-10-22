@@ -1,5 +1,6 @@
 //! Runs: executing a program over a message.
 
+pub(crate) mod budget;
 mod builder;
 mod cancel;
 mod engine;
@@ -21,8 +22,13 @@ mod trace;
 /// `std::time::Instant` itself on native targets and a browser clock on
 /// wasm32.
 pub use crate::base::Instant;
-pub use crate::base::{CancelToken, Change, Context, ErrorRecord};
+pub use crate::base::{
+    BudgetCause, CancelToken, Change, Context, ErrorRecord, ErrorSite, ExprCause, ExprPathStep,
+    SiteKind,
+};
 pub use crate::observe::status::{RunStatus, Selection, WorkflowExit, WorkflowRecord};
+pub(crate) use budget::TaskBudget;
+pub use budget::{ConditionErrorPolicy, DispatchKind, OccupancyGuard, RunAccountant};
 pub use builder::EngineBuilder;
 pub(crate) use cancel::timers_available;
 pub use engine::{Engine, EngineConfig};

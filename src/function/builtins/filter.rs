@@ -1,8 +1,9 @@
 //! `filter`'s config: a gate on the rest of the workflow.
 
-use crate::base::{EVALUATION_ERROR, ErrorKind, Result};
+use crate::base::{EVALUATION_ERROR, ErrorKind, Result, SiteKind};
 use crate::expr::Expr;
 use crate::function::{FunctionConfig, Outcome, SyncCtx};
+use crate::run::ConditionErrorPolicy;
 use ::log::debug;
 use serde::{Deserialize, Serialize};
 
@@ -39,11 +40,23 @@ impl FilterConfig {
     pub(crate) fn call<'p>(&'p self, cx: &mut SyncCtx<'_, '_, 'p>) -> Result<Outcome> {
         let met = match cx.test(&self.condition) {
             Ok(met) => met,
-            Err(e) if e.kind() == &ErrorKind::Budget => return Err(e),
             Err(e) => {
+                let site = cx.site(
+                    SiteKind::FilterCondition,
+                    cx.task_path
+                        .join("function")
+                        .join("input")
+                        .join("condition"),
+                );
+                if cx.condition_error_policy == ConditionErrorPolicy::Stop
+                    || e.kind() == &ErrorKind::Budget
+                {
+                    return Err(e.with_site(site));
+                }
                 debug!("Filter: condition evaluation error: {e:?}");
                 let message = format!("Filter condition failed to evaluate: {e}");
-                let record = cx.record(EVALUATION_ERROR, message);
+                let mut record = cx.record(EVALUATION_ERROR, message).with_site(site);
+                record.cause = e.expr_cause_arc();
                 cx.errors.push(record);
                 false
             }

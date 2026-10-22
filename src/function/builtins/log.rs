@@ -1,6 +1,6 @@
 //! `log`'s config: a log line and its structured fields.
 
-use crate::base::Result;
+use crate::base::{ErrorKind, Result};
 use crate::expr::Expr;
 use crate::function::{FunctionConfig, Outcome, SyncCtx};
 use datavalue::OwnedDataValue;
@@ -55,18 +55,21 @@ impl LogLevel {
 }
 
 /// One expression's text onto `line`: a string as it is, anything else as
-/// compact JSON, and `<eval error>` when it fails.
-fn stringify<'p>(cx: &mut SyncCtx<'_, '_, 'p>, expr: &'p Expr, line: &mut String) {
+/// compact JSON, and `<eval error>` when it fails (unless the run's budget is
+/// exceeded, which propagates).
+fn stringify<'p>(cx: &mut SyncCtx<'_, '_, 'p>, expr: &'p Expr, line: &mut String) -> Result<()> {
     match cx.eval(expr) {
         Ok(value) => match &*value {
             OwnedDataValue::String(s) => line.push_str(s),
             other => line.push_str(&other.to_json_string()),
         },
+        Err(e) if e.kind() == &ErrorKind::Budget => return Err(e),
         Err(e) => {
             ::log::error!("Log: Failed to evaluate expression: {e:?}");
             line.push_str("<eval error>");
         }
     }
+    Ok(())
 }
 
 impl LogConfig {
@@ -78,12 +81,12 @@ impl LogConfig {
             return Ok(Outcome::Ok);
         }
         let mut line = String::new();
-        stringify(cx, &self.message, &mut line);
+        stringify(cx, &self.message, &mut line)?;
         for (i, (key, expr)) in self.fields.iter().enumerate() {
             line.push_str(if i == 0 { " [" } else { ", " });
             line.push_str(key);
             line.push('=');
-            stringify(cx, expr, &mut line);
+            stringify(cx, expr, &mut line)?;
         }
         if !self.fields.is_empty() {
             line.push(']');

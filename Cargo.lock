@@ -270,9 +270,9 @@ dependencies = [
 
 [[package]]
 name = "datalogic-rs"
-version = "5.8.2"
+version = "5.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "511dbd760cd253659ee02e6ffc4b64cf93031fb37db092a3ff4230162d83e0bd"
+checksum = "1eb6b0da363a2c4597072bce89525153ef72083206e0ad40322949a921c62db8"
 dependencies = [
  "bumpalo",
  "chrono",
@@ -288,9 +288,9 @@ dependencies = [
 
 [[package]]
 name = "datavalue-rs"
-version = "0.3.2"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff814c91f97a2a58e3e012d61314669c22f667f79fb62df109dea3f898fab45e"
+checksum = "9dd41c92539e39b6ba3fd008263512f600f9e0136c55bbee3657dfb16ef63dca"
 dependencies = [
  "bumpalo",
  "chrono",

@@ -12,6 +12,7 @@ use crate::expr::{
     CRATE, Expr, ExprEngine, ExprVisitor, Filled, FromValue, Interpolated, Output, Path, Rendered,
     ResolveExpr, Resolver, SealedResolver, Seg, reads_secret,
 };
+use crate::run::{RunAccountant, TaskBudget};
 use crate::state::{Lookup, Reader, splice};
 use bumpalo::Bump;
 use datavalue::{DataValue, OwnedDataValue};
@@ -137,6 +138,8 @@ pub(crate) struct CallStart<'r> {
     pub(crate) payload: &'r OwnedDataValue,
     /// The engine the program was compiled with.
     pub(crate) exprs: &'r ExprEngine,
+    /// The run's shared task and expression op budget.
+    pub(crate) budget: &'r TaskBudget<'r>,
     /// The call's static facts.
     pub(crate) info: CallInfo<'r>,
     /// When the run must end.
@@ -338,6 +341,13 @@ impl<'r> Ctx<'r> {
         self.start.cancel
     }
 
+    /// The host-owned [`RunAccountant`] attached to this run, if any, so a
+    /// function can charge domain-specific work units via
+    /// [`RunAccountant::charge_custom`].
+    pub fn accountant(&self) -> Option<&'r dyn RunAccountant> {
+        self.start.budget.accountant()
+    }
+
     /// The value at `path` as this call sees it: its own writes, over a
     /// fan-out element's bindings, over the run's context. Borrowed unless
     /// it must be put together, when it is converted: a value only the run's
@@ -415,7 +425,9 @@ impl<'r> Ctx<'r> {
         }
         with_arena(|arena| {
             let root = self.root_in(arena);
-            self.start.exprs.eval_view(expr, root, arena)
+            self.start
+                .budget
+                .eval_view(self.start.exprs, expr, root, arena)
         })
     }
 
@@ -428,8 +440,14 @@ impl<'r> Ctx<'r> {
         }
         with_arena(|arena| {
             let root = self.root_in(arena);
-            let view = self.start.exprs.eval_in(expr.logic(CRATE), root, arena)?;
-            expr.value_of(view, CRATE)
+            let (view, ops) = self.start.budget.eval_in(
+                self.start.exprs,
+                expr.logic(CRATE),
+                expr.reads_secret(CRATE),
+                root,
+                arena,
+            )?;
+            expr.value_of(view, ops, CRATE)
         })
     }
 
@@ -691,6 +709,7 @@ pub(crate) mod testing {
         f: impl FnOnce(Ctx<'_>) -> R,
     ) -> R {
         let exprs = ExprEngine::default();
+        let budget = TaskBudget::unlimited();
         let payload = OwnedDataValue::Null;
         let mut slot = OwnedDataValue::from(context);
         let mut rc = RunContext::new(&mut slot, Tuning::default());
@@ -701,6 +720,7 @@ pub(crate) mod testing {
                 binding,
                 payload: &payload,
                 exprs: &exprs,
+                budget: &budget,
                 info,
                 deadline: None,
                 cancel: None,
@@ -815,6 +835,7 @@ mod tests {
     fn a_removal_without_capture_removes_what_the_call_sees_and_records_nothing() {
         let context = json!({"data": {"a": 1, "list": [1, 2]}, "metadata": {}, "temp_data": {}});
         let exprs = ExprEngine::default();
+        let budget = TaskBudget::unlimited();
         let payload = OwnedDataValue::Null;
         let mut slot = OwnedDataValue::from(&context);
         let mut rc = RunContext::new(&mut slot, Tuning::default());
@@ -824,6 +845,7 @@ mod tests {
                 binding: None,
                 payload: &payload,
                 exprs: &exprs,
+                budget: &budget,
                 info: info(),
                 deadline: None,
                 cancel: None,
@@ -863,6 +885,7 @@ mod tests {
         let context = json!({"data": {"kept": {"k": 1}, "list": [1, null], "s": "scalar"},
             "metadata": {}, "temp_data": {}});
         let exprs = ExprEngine::default();
+        let budget = TaskBudget::unlimited();
         let payload = OwnedDataValue::Null;
         let mut slot = OwnedDataValue::from(&context);
         let mut rc = RunContext::new(&mut slot, Tuning::default());
@@ -877,6 +900,7 @@ mod tests {
                     binding: None,
                     payload: &payload,
                     exprs: &exprs,
+                    budget: &budget,
                     info: info(),
                     deadline: None,
                     cancel: None,
@@ -943,6 +967,7 @@ mod tests {
     /// applied in call order, as a fan-out's elements settle. Wire text.
     fn settled(context: &Value, calls: &[Call<'_>]) -> String {
         let exprs = ExprEngine::default();
+        let budget = TaskBudget::unlimited();
         let payload = OwnedDataValue::Null;
         let mut slot = OwnedDataValue::from(context);
         let mut rc = RunContext::new(&mut slot, Tuning::default());
@@ -954,6 +979,7 @@ mod tests {
                     binding: None,
                     payload: &payload,
                     exprs: &exprs,
+                    budget: &budget,
                     info: info(),
                     deadline: None,
                     cancel: None,
@@ -1075,6 +1101,7 @@ mod tests {
             ),
         ];
         let exprs = ExprEngine::default();
+        let budget = TaskBudget::unlimited();
         let payload = OwnedDataValue::Null;
         let mut slot = OwnedDataValue::from(&context);
         let mut rc = RunContext::new(&mut slot, Tuning::default());
@@ -1094,6 +1121,7 @@ mod tests {
                     binding: Some(&binding),
                     payload: &payload,
                     exprs: &exprs,
+                    budget: &budget,
                     info: info(),
                     deadline: None,
                     cancel: None,
@@ -1133,6 +1161,7 @@ mod tests {
         let context = json!({"data": {"order": {"customer": "C", "qty": 3}},
             "metadata": {}, "temp_data": {}});
         let exprs = ExprEngine::default();
+        let budget = TaskBudget::unlimited();
         let payload = OwnedDataValue::Null;
         let mut slot = OwnedDataValue::from(&context);
         let mut rc = RunContext::new(&mut slot, Tuning::default());
@@ -1158,6 +1187,7 @@ mod tests {
                 binding: None,
                 payload: &payload,
                 exprs: &exprs,
+                budget: &budget,
                 info: info(),
                 deadline: None,
                 cancel: None,
@@ -1254,6 +1284,7 @@ mod tests {
     fn input_nulls_every_value_the_walk_reports_reading_a_secret() {
         let context = json!({"data": {"k": "v"}, "metadata": {}, "temp_data": {}});
         let exprs = ExprEngine::default();
+        let budget = TaskBudget::unlimited();
         let payload = OwnedDataValue::Null;
         let mut slot = OwnedDataValue::from(&context);
         let mut rc = RunContext::new(&mut slot, Tuning::default());
@@ -1263,6 +1294,7 @@ mod tests {
                 binding: None,
                 payload: &payload,
                 exprs: &exprs,
+                budget: &budget,
                 info: info(),
                 deadline: None,
                 cancel: None,

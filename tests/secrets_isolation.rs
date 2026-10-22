@@ -472,6 +472,22 @@ fn assert_exits_clean(label: &str, message: &Message, run: &Run) {
     if let RunStatus::Stopped(e) = run.status() {
         clean("stop error Display", &e.to_string());
         clean("stop error Debug", &format!("{e:?}"));
+        clean(
+            "stop error datalogic_error",
+            &format!("{:?}", e.datalogic_error()),
+        );
+        clean("stop error expr_cause", &format!("{:?}", e.expr_cause()));
+        clean("stop error site", &format!("{:?}", e.site()));
+    }
+    for (i, rec) in message.errors().iter().enumerate() {
+        clean(
+            &format!("error record {i} cause"),
+            &format!("{:?}", rec.cause()),
+        );
+        clean(
+            &format!("error record {i} site"),
+            &format!("{:?}", rec.site()),
+        );
     }
     if let Some(trace) = run.trace() {
         clean(
@@ -1379,4 +1395,47 @@ async fn a_logging_layer_reading_the_input_never_sees_a_secret() {
         assert_clean("the process log", &line);
     }
     assert_clean("the message", &message.to_json().to_string());
+}
+
+#[tokio::test]
+async fn an_expression_throwing_or_failing_on_a_secret_redacts_its_structured_cause() {
+    use dataflow_rs::expr::OperatorFamily;
+    use std::error::Error as _;
+
+    install_logger();
+    let store = Secrets::new(dv(secrets())).expect("the store is an object");
+    let engine = ExprEngine::builder()
+        .secrets(store)
+        .family(OperatorFamily::ErrorHandling)
+        .build()
+        .expect("the expression engine builds");
+    for raw in [
+        json!({ "throw": { "secret": "partner_key" } }),
+        json!({ "throw": { "cat": ["leaked:", { "secret": "partner.hmac" }] } }),
+    ] {
+        let compiled = engine
+            .compile::<OwnedDataValue>(&raw)
+            .expect("the expression compiles");
+        let err = engine
+            .eval(&compiled, &OwnedDataValue::Null)
+            .expect_err("the throw fails");
+        assert_clean("eval error Display", &err.to_string());
+        assert_clean("eval error Debug", &format!("{err:?}"));
+        assert_clean(
+            "eval error datalogic_error",
+            &format!("{:?}", err.datalogic_error()),
+        );
+        if let Some(dl) = err.datalogic_error() {
+            assert_clean("datalogic_error Display", &dl.to_string());
+        }
+        if let Some(src) = err.source() {
+            assert_clean("std::error::Error::source Display", &src.to_string());
+            assert_clean("std::error::Error::source Debug", &format!("{src:?}"));
+        }
+        assert_clean("eval error expr_cause", &format!("{:?}", err.expr_cause()));
+        assert!(
+            err.expr_cause().is_some(),
+            "structured cause metadata is still preserved without leaking the secret"
+        );
+    }
 }

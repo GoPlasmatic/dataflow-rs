@@ -488,6 +488,7 @@ impl<'w> Walk<'w> {
         self.conds.push(CondSite {
             expr,
             step: step.map(|(_, id)| id.to_owned()),
+            path: at,
         });
         Some(row)
     }

@@ -440,3 +440,74 @@ fn a_budget_failure_over_a_json_root_is_budget() {
     assert_eq!(err.kind(), &ErrorKind::Budget);
     assert_eq!(err.code(), "BUDGET_EXCEEDED");
 }
+
+#[test]
+fn datalogic_error_and_structured_expr_cause_are_preserved_and_serializable() {
+    use dataflow_rs::run::{BudgetCause, ErrorSite, ExprCause, SiteKind};
+    use std::error::Error as _;
+    use std::sync::Arc;
+
+    let e = ExprEngine::default();
+    let x: Expr<OwnedDataValue> = e
+        .compile(&json!({"+": [1, {"/": [{"var": "data.n"}, 0]}]}))
+        .unwrap();
+    let err = e
+        .eval(&x, &root(json!({"data": {"n": 10}})))
+        .expect_err("division by zero fails");
+    assert_eq!(err.kind(), &ErrorKind::Eval);
+    assert!(err.datalogic_error().is_some());
+    assert!(err.source().is_some());
+    assert_eq!(
+        err.source().unwrap().to_string(),
+        err.datalogic_error().unwrap().to_string()
+    );
+
+    let cause = err.expr_cause().expect("expr_cause is populated");
+    assert_eq!(cause.code, dataflow_rs::datalogic_rs::ErrorCode::Thrown);
+    assert_eq!(cause.operator.as_deref(), Some("/"));
+    assert_eq!(cause.expr_path.as_deref(), Some("/+/1"));
+    assert!(cause.steps.len() >= 2, "{:?}", cause.steps);
+    assert_eq!(cause.steps[0].operator.as_deref(), Some("+"));
+    assert_eq!(cause.steps.last().unwrap().operator.as_deref(), Some("/"));
+
+    // ExprCause and ErrorSite round-trip cleanly through serde.
+    let cause_json = serde_json::to_string(cause).unwrap();
+    let cause_back: ExprCause = serde_json::from_str(&cause_json).unwrap();
+    assert_eq!(&cause_back, cause);
+
+    let site = ErrorSite::new(SiteKind::TaskCondition, Arc::from("w1"))
+        .with_task(Arc::from("t1"))
+        .with_path("tasks[0].condition".parse().unwrap());
+    let site_json = serde_json::to_string(&site).unwrap();
+    let site_back: ErrorSite = serde_json::from_str(&site_json).unwrap();
+    assert_eq!(site_back, site);
+
+    let wrapped = err.with_site(site.clone()).wrap("outer context");
+    assert!(wrapped.datalogic_error().is_some());
+    assert_eq!(wrapped.expr_cause(), Some(&cause_back));
+    assert_eq!(wrapped.site(), Some(&site));
+
+    let bc: BudgetCause = serde_json::from_value(json!({"used": 10, "limit": 5})).unwrap();
+    assert_eq!((bc.used, bc.limit), (10, 5));
+}
+
+#[cfg(feature = "budget")]
+#[test]
+fn budget_exceeded_populates_budget_cause_and_ops() {
+    let e = ExprEngine::builder().ops_budget(2).build().unwrap();
+    let x: Expr<OwnedDataValue> = e
+        .compile(&json!({"map": [{"var": "data.l"}, {"+": [{"var": ""}, 1]}]}))
+        .unwrap();
+    let err = e
+        .eval(&x, &root(json!({"data": {"l": [1, 2, 3]}})))
+        .unwrap_err();
+    let cause = err.expr_cause().expect("budget error carries expr_cause");
+    assert_eq!(
+        cause.code,
+        dataflow_rs::datalogic_rs::ErrorCode::BudgetExceeded
+    );
+    let budget = cause.budget.as_ref().expect("budget cause is present");
+    assert_eq!(budget.limit, 2);
+    assert!(budget.used > budget.limit, "{budget:?}");
+    assert!(cause.ops.is_some_and(|ops| ops >= budget.used));
+}

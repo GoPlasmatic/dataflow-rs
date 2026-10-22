@@ -70,7 +70,7 @@ serde_json = { version = "1.0", features = ["float_roundtrip", "preserve_order"]
 # `ext-math`, `ext-control`, `ext-object`, `error-handling`) are compiled in
 # unconditionally and selected per engine at runtime through
 # `ExprEngineBuilder`, which defaults to Core only.
-datalogic-rs = { version = "5.8.2", features = [
+datalogic-rs = { version = "5.9.0", features = [
     "serde_json",
     "templating",
     "ext-string",
@@ -80,7 +80,7 @@ datalogic-rs = { version = "5.8.2", features = [
     "ext-object",
     "error-handling",
 ] }
-datavalue = { package = "datavalue-rs", version = "0.3.2", features = ["serde", "serde_json"] }
+datavalue = { package = "datavalue-rs", version = "0.3.3", features = ["serde", "serde_json"] }
 # `Instant` that works on wasm32; `std::time::Instant` natively.
 web-time = "1.1"
 bumpalo = "3.20"

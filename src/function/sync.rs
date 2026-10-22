@@ -5,9 +5,10 @@
 //! converted, until the next checkpoint. Crate-private: a host implements
 //! [`Function`](super::Function), whose calls go through the async chain.
 
-use crate::base::{Change, ErrorRecord, Result};
+use crate::base::{AuthoredPath, Change, ErrorRecord, ErrorSite, Result, SiteKind};
 use crate::expr::arena::with_arena;
 use crate::expr::{Expr, ExprEngine, FromValue, Path};
+use crate::run::{ConditionErrorPolicy, TaskBudget};
 use crate::state::RunContext;
 use datavalue::{DataValue, OwnedDataValue};
 use std::sync::Arc;
@@ -23,12 +24,20 @@ pub(crate) struct SyncCtx<'c, 'm, 'p> {
     pub(crate) rc: &'c mut RunContext<'m, 'p>,
     /// The expression engine the program was compiled with.
     pub(crate) exprs: &'p ExprEngine,
+    /// The run's shared task and expression op budget.
+    pub(crate) budget: &'c TaskBudget<'c>,
+    /// How condition evaluation errors are handled during this run.
+    pub(crate) condition_error_policy: ConditionErrorPolicy,
     /// The message's payload.
     pub(crate) payload: &'c OwnedDataValue,
     /// The workflow's id, shared with the program's own `Arc<str>`.
     pub(crate) workflow_id: &'c Arc<str>,
     /// The task's id, shared as `workflow_id` is.
     pub(crate) task_id: &'c Arc<str>,
+    /// The task's authored path in the workflow definition.
+    pub(crate) task_path: &'p AuthoredPath,
+    /// The current loop counter, when inside a workflow loop.
+    pub(crate) loop_counter: Option<i64>,
     /// Whether `Change`s are recorded: only when the audit or the trace
     /// keeps them.
     pub(crate) capture: bool,
@@ -73,13 +82,29 @@ impl<'p> SyncCtx<'_, '_, 'p> {
     /// operation ceiling is exceeded; [`ErrorKind::Eval`](crate::base::ErrorKind::Eval)
     /// for any other failure, including a result that is not a `T`.
     pub(crate) fn eval<'e, T: FromValue>(&mut self, expr: &'e Expr<T>) -> Result<T::Out<'e>> {
-        eval(self.rc, self.exprs, expr)
+        eval(self.rc, self.exprs, self.budget, expr)
     }
 
     /// A condition: only a literal `true` passes; the error is returned for
     /// the caller to classify.
     pub(crate) fn test(&mut self, expr: &Expr) -> Result<bool> {
-        test(self.rc, self.exprs, expr)
+        test(self.rc, self.exprs, self.budget, expr)
+    }
+
+    /// Builds an [`ErrorSite`] stamped with this task's workflow, task id,
+    /// and loop counter.
+    pub(crate) fn site(&self, kind: SiteKind, path: AuthoredPath) -> ErrorSite {
+        ErrorSite {
+            kind,
+            workflow_id: self.workflow_id.clone(),
+            task_id: Some(self.task_id.clone()),
+            group_id: None,
+            rule_index: None,
+            mapping_index: None,
+            target_path: None,
+            authored_path: Some(path),
+            loop_counter: self.loop_counter,
+        }
     }
 
     /// Writes `value` at `target`, recording its `Change` under capture.
@@ -103,27 +128,29 @@ impl<'p> SyncCtx<'_, '_, 'p> {
 pub(crate) fn eval<'e, T: FromValue>(
     rc: &mut RunContext<'_, '_>,
     exprs: &ExprEngine,
+    budget: &TaskBudget<'_>,
     expr: &'e Expr<T>,
 ) -> Result<T::Out<'e>> {
     if let Some(c) = expr.constant() {
         return Ok(T::lend(c));
     }
-    rc.read(|_, root| with_arena(|arena| exprs.eval_view(expr, root, arena)))
+    rc.read(|_, root| with_arena(|arena| budget.eval_view(exprs, expr, root, arena)))
 }
 
-/// Tests a condition against the view, in a pooled arena, so nothing it
-/// allocates stays in the run arena: only a literal `true` passes, as v3's
-/// `evaluate_condition`. The error is returned for the caller to classify.
-/// A folded constant reads no view.
-pub(crate) fn test(rc: &mut RunContext<'_, '_>, exprs: &ExprEngine, expr: &Expr) -> Result<bool> {
+pub(crate) fn test(
+    rc: &mut RunContext<'_, '_>,
+    exprs: &ExprEngine,
+    budget: &TaskBudget<'_>,
+    expr: &Expr,
+) -> Result<bool> {
     if let Some(c) = expr.constant() {
         return Ok(matches!(c, OwnedDataValue::Bool(true)));
     }
     rc.read(|_, root| {
         with_arena(|arena| {
-            exprs
-                .eval_in(expr.logic(), root, arena)
-                .map(|v| matches!(v, DataValue::Bool(true)))
+            budget
+                .eval_in(exprs, expr.logic(), expr.reads_secret(), root, arena)
+                .map(|(v, _)| matches!(v, DataValue::Bool(true)))
         })
     })
 }
@@ -157,6 +184,8 @@ mod tests {
     /// changes it recorded.
     fn with_cx(capture: bool, f: impl FnOnce(&mut SyncCtx<'_, '_, '_>)) -> Vec<Change> {
         let exprs = ExprEngine::default();
+        let budget = TaskBudget::unlimited();
+        let task_path = AuthoredPath::root();
         let mut slot = OwnedDataValue::from(&json!({
             "data": {"a": 1, "t": true, "zero": 0}, "metadata": {}, "temp_data": {}
         }));
@@ -167,9 +196,13 @@ mod tests {
         f(&mut SyncCtx {
             rc: &mut rc,
             exprs: &exprs,
+            budget: &budget,
+            condition_error_policy: ConditionErrorPolicy::Skip,
             payload: &OwnedDataValue::Null,
             workflow_id: &workflow_id,
             task_id: &task_id,
+            task_path: &task_path,
+            loop_counter: None,
             capture,
             traced: false,
             changes: &mut changes,

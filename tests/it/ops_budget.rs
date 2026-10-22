@@ -425,3 +425,209 @@ async fn a_validation_rule_that_fails_to_evaluate_is_still_a_rejection() {
     );
     assert_eq!(data(&m)["went_on"], json!(true));
 }
+
+#[tokio::test]
+async fn condition_error_policy_stop_halts_budget_exceeded_across_all_condition_sites() {
+    use dataflow_rs::RunOptions;
+    use dataflow_rs::run::{ConditionErrorPolicy, SiteKind};
+
+    let over = json!({ ">": [fold_expr(), 0] });
+    let mark = json!({
+        "id": "after",
+        "function": {
+            "name": "map",
+            "input": { "mappings": [{ "path": "data.went_on", "logic": true }] }
+        }
+    });
+
+    // 1. Workflow condition over ops budget
+    let wf_cond = json!({
+        "id": "w1",
+        "condition": over.clone(),
+        "on_failure": "continue",
+        "tasks": [mark.clone()]
+    });
+    let e = engine_over(&wf_cond, Some(TIGHT));
+    let mut m = message();
+    let run = e
+        .run_with(
+            &mut m,
+            &RunOptions::default().condition_error_policy(ConditionErrorPolicy::Stop),
+        )
+        .await;
+    assert_stopped_by_the_budget(&run);
+    if let RunStatus::Stopped(err) = run.status() {
+        assert_eq!(
+            err.site().map(|s| s.kind),
+            Some(SiteKind::WorkflowCondition)
+        );
+        assert!(err.expr_cause().and_then(|c| c.budget.as_ref()).is_some());
+    }
+    assert!(data(&m).get("went_on").is_none());
+
+    // 2. Group condition over ops budget
+    let group_cond = json!({
+        "id": "w1",
+        "on_failure": "continue",
+        "tasks": [
+            {
+                "id": "g1",
+                "condition": over.clone(),
+                "tasks": [{
+                    "id": "in_group",
+                    "function": {
+                        "name": "map",
+                        "input": { "mappings": [{ "path": "data.went_on", "logic": true }] }
+                    }
+                }]
+            },
+            mark.clone()
+        ]
+    });
+    let e = engine_over(&group_cond, Some(TIGHT));
+    let mut m = message();
+    let run = e
+        .run_with(
+            &mut m,
+            &RunOptions::default().condition_error_policy(ConditionErrorPolicy::Stop),
+        )
+        .await;
+    assert_stopped_by_the_budget(&run);
+    if let RunStatus::Stopped(err) = run.status() {
+        assert_eq!(err.site().map(|s| s.kind), Some(SiteKind::GroupCondition));
+    }
+    assert!(data(&m).get("went_on").is_none());
+
+    // 3. Task condition over ops budget
+    let task_cond = json!({
+        "id": "w1",
+        "on_failure": "continue",
+        "tasks": [
+            {
+                "id": "t1",
+                "condition": over.clone(),
+                "on_failure": "continue",
+                "function": {
+                    "name": "map",
+                    "input": { "mappings": [{ "path": "data.t1", "logic": true }] }
+                }
+            },
+            mark.clone()
+        ]
+    });
+    let e = engine_over(&task_cond, Some(TIGHT));
+    let mut m = message();
+    let run = e
+        .run_with(
+            &mut m,
+            &RunOptions::default().condition_error_policy(ConditionErrorPolicy::Stop),
+        )
+        .await;
+    assert_stopped_by_the_budget(&run);
+    if let RunStatus::Stopped(err) = run.status() {
+        assert_eq!(err.site().map(|s| s.kind), Some(SiteKind::TaskCondition));
+    }
+    assert!(data(&m).get("went_on").is_none());
+
+    // 4. Filter condition over ops budget even with `on_failure: continue` and `on_reject: skip`
+    let filter_cond = json!({
+        "id": "w1",
+        "on_failure": "continue",
+        "tasks": [
+            {
+                "id": "f1",
+                "on_failure": "continue",
+                "function": {
+                    "name": "filter",
+                    "input": {
+                        "condition": over,
+                        "on_reject": "skip"
+                    }
+                }
+            },
+            mark
+        ]
+    });
+    let e = engine_over(&filter_cond, Some(TIGHT));
+    let mut m = message();
+    let run = e
+        .run_with(
+            &mut m,
+            &RunOptions::default().condition_error_policy(ConditionErrorPolicy::Stop),
+        )
+        .await;
+    assert_stopped_by_the_budget(&run);
+    if let RunStatus::Stopped(err) = run.status() {
+        assert_eq!(err.site().map(|s| s.kind), Some(SiteKind::FilterCondition));
+    }
+    assert!(data(&m).get("went_on").is_none());
+}
+
+#[tokio::test]
+async fn cumulative_run_expr_ops_budget_and_accountant_track_partial_ops_on_ok_and_err() {
+    use dataflow_rs::RunOptions;
+    use dataflow_rs::run::RunAccountant;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[derive(Default)]
+    struct OpsAccountant {
+        total_ops: AtomicU64,
+    }
+
+    impl RunAccountant for OpsAccountant {
+        fn on_expr_evaluated(&self, ops: u64) {
+            self.total_ops.fetch_add(ops, Ordering::SeqCst);
+        }
+    }
+
+    // Two medium-sized folds: each individually fits under the engine's per-eval
+    // ceiling (or an unbounded engine), but together they exceed the run's
+    // cumulative `with_expr_ops_budget`.
+    let wf = json!({
+        "id": "w",
+        "on_failure": "continue",
+        "tasks": [
+            {
+                "id": "first",
+                "on_failure": "continue",
+                "function": {
+                    "name": "map",
+                    "input": { "mappings": [{ "path": "data.a", "logic": fold_expr() }] }
+                }
+            },
+            {
+                "id": "second",
+                "on_failure": "continue",
+                "function": {
+                    "name": "map",
+                    "input": { "mappings": [{ "path": "data.b", "logic": fold_expr() }] }
+                }
+            }
+        ]
+    });
+    let e = engine_over(&wf, None);
+    let acc = OpsAccountant::default();
+    let mut m = message_with(json!({ "xs": vec![1; 50] }));
+    let run = e
+        .run_with(
+            &mut m,
+            &RunOptions::default()
+                .with_expr_ops_budget(300)
+                .accountant(&acc),
+        )
+        .await;
+    assert_stopped_by_the_budget(&run);
+    assert_eq!(
+        data(&m)["a"],
+        json!(50),
+        "first fold fits under 300 ops and completes"
+    );
+    assert!(
+        data(&m).get("b").is_none(),
+        "second fold crosses the remaining cumulative run ops budget and aborts"
+    );
+    assert!(
+        acc.total_ops.load(Ordering::SeqCst) > 150,
+        "accountant observed ops from both the completed first fold and the aborted second fold"
+    );
+}

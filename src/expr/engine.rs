@@ -4,7 +4,7 @@ use super::arena::with_arena;
 use super::expr::{Evaluated, Expr, FromValue};
 use super::operators::{ALL_OPERATORS, Operator, OperatorFamily};
 use super::secrets::{SECRET_OPERATOR, SecretOperator, Secrets};
-use crate::base::{Error, ErrorKind, Result};
+use crate::base::{Error, ErrorKind, ExprCause, Result};
 use bumpalo::Bump;
 use datalogic_rs::{CustomOperator, DataValue, Engine, Logic};
 use datavalue::OwnedDataValue;
@@ -30,6 +30,14 @@ impl CustomOperator for SharedOperator {
         arena: &'a datalogic_rs::bumpalo::Bump,
     ) -> datalogic_rs::Result<&'a datalogic_rs::DataValue<'a>> {
         self.0.evaluate(args, ctx, arena)
+    }
+
+    fn info(&self) -> datalogic_rs::CustomOperatorInfo {
+        self.0.info()
+    }
+
+    fn check(&self, args: &[OwnedDataValue]) -> std::result::Result<(), datalogic_rs::Diagnostic> {
+        self.0.check(args)
     }
 }
 
@@ -173,17 +181,18 @@ impl ExprEngine {
     /// [`ErrorKind::Eval`] when evaluating a constant at fold time fails;
     /// [`ErrorKind::Config`] when a folded constant is not a `T`.
     pub fn compile<T: FromValue>(&self, raw: &Value) -> Result<Expr<T>> {
+        let reads_secret = super::walk::reads_secret(raw);
         let logic = self
             .logic()
             .compile(raw)
-            .map_err(|e| Error::new(ErrorKind::Compile, e.to_string()))?;
+            .map_err(|e| compile_error(e, reads_secret))?;
         // `is_constant`, never `is_static`: the latter is also true for a rule
         // that failed to fold because it errors, and that error belongs at eval.
         let constant = if logic.is_constant() {
             let folded = with_arena(|arena| {
                 self.logic()
                     .evaluate(&logic, DataValue::Object(&[]), arena)
-                    .map_err(|e| Error::new(ErrorKind::Eval, e.to_string()))
+                    .map_err(|e| eval_error(e, Some(&logic), None, reads_secret))
                     .and_then(|v| {
                         T::from_view(v).map_err(|why| {
                             Error::new(
@@ -194,6 +203,7 @@ impl ExprEngine {
                                     T::type_name()
                                 ),
                             )
+                            .with_expr_cause(ExprCause::type_mismatch(None))
                         })
                     })
             })?;
@@ -205,6 +215,7 @@ impl ExprEngine {
             raw: raw.clone(),
             logic,
             constant,
+            reads_secret,
         })
     }
 
@@ -234,44 +245,38 @@ impl ExprEngine {
             });
         }
         with_arena(|arena| {
-            let root = sealed::Sealed::view_in(root, arena).map_err(eval_error)?;
-            #[cfg(feature = "budget")]
-            let (view, ops) = {
-                let budget = self.logic().resolve_ops_budget(None);
-                let m = self
-                    .logic()
-                    .evaluate_metered(&expr.logic, root, arena, budget)
-                    .map_err(eval_error)?;
-                (m.value, Some(m.ops))
-            };
-            #[cfg(not(feature = "budget"))]
-            let (view, ops) = (
-                self.logic()
-                    .evaluate(&expr.logic, root, arena)
-                    .map_err(eval_error)?,
-                None,
-            );
+            let root = sealed::Sealed::view_in(root, arena)
+                .map_err(|e| eval_error(e, Some(&expr.logic), None, expr.reads_secret))?;
+            let (view, ops) = self.eval_in(expr.logic(), expr.reads_secret, root, arena)?;
             Ok(Evaluated {
-                value: T::give(expr.convert(view)?),
+                value: T::give(expr.convert(view, ops)?),
                 ops,
             })
         })
     }
 
-    /// Evaluates `expr` against a view `root`, allocating in `arena` and
-    /// converting to `T`: the shared evaluation path for `SyncCtx`, `Ctx` and
-    /// `map`'s destination.
-    pub(crate) fn eval_view<'e, T: FromValue>(
+    /// Evaluates `expr` against a view `root` with an optional extra op ceiling,
+    /// returning both the result and the metered op count (even on `Err`):
+    /// the shared evaluation path for `SyncCtx`, `Ctx` and `map`'s destination.
+    pub(crate) fn eval_view_metered<'e, T: FromValue>(
         &self,
         expr: &'e Expr<T>,
         root: &DataValue<'_>,
         arena: &Bump,
-    ) -> Result<T::Out<'e>> {
+        ops_limit: Option<u64>,
+    ) -> (Result<T::Out<'e>>, Option<u64>) {
         if let Some(c) = expr.constant() {
-            return Ok(T::lend(c));
+            let ops = if cfg!(feature = "budget") {
+                Some(0)
+            } else {
+                None
+            };
+            return (Ok(T::lend(c)), ops);
         }
-        let view = self.eval_in(expr.logic(), root, arena)?;
-        expr.convert(view).map(T::give)
+        let (res, ops) =
+            self.eval_in_metered(expr.logic(), expr.reads_secret, root, arena, ops_limit);
+        let out = res.and_then(|view| expr.convert(view, ops).map(T::give));
+        (out, ops)
     }
 
     /// Evaluates `logic` against a view root, allocating in `arena`: how a
@@ -286,12 +291,49 @@ impl ExprEngine {
     pub(crate) fn eval_in<'a>(
         &self,
         logic: &'a Logic,
+        reads_secret: bool,
         root: &'a DataValue<'a>,
         arena: &'a Bump,
-    ) -> Result<&'a DataValue<'a>> {
-        self.logic()
-            .evaluate(logic, root, arena)
-            .map_err(eval_error)
+    ) -> Result<(&'a DataValue<'a>, Option<u64>)> {
+        let (res, ops) = self.eval_in_metered(logic, reads_secret, root, arena, None);
+        res.map(|v| (v, ops))
+    }
+
+    /// Evaluates `logic` against a view root with an optional extra op ceiling,
+    /// returning both the result and the metered op count (even on `Err`).
+    pub(crate) fn eval_in_metered<'a>(
+        &self,
+        logic: &'a Logic,
+        reads_secret: bool,
+        root: &'a DataValue<'a>,
+        arena: &'a Bump,
+        ops_limit: Option<u64>,
+    ) -> (Result<&'a DataValue<'a>>, Option<u64>) {
+        #[cfg(feature = "budget")]
+        {
+            let engine_budget = self.logic().resolve_ops_budget(None);
+            let budget = match ops_limit {
+                Some(b) => engine_budget.min(b),
+                None => engine_budget,
+            };
+            let report = self
+                .logic()
+                .evaluate_metered_report(logic, root, arena, budget);
+            let ops = Some(report.ops);
+            let res = report
+                .value
+                .map_err(|e| eval_error(e, Some(logic), ops, reads_secret));
+            (res, ops)
+        }
+        #[cfg(not(feature = "budget"))]
+        {
+            let _ = ops_limit;
+            let res = self
+                .logic()
+                .evaluate(logic, root, arena)
+                .map_err(|e| eval_error(e, Some(logic), None, reads_secret));
+            (res, None)
+        }
     }
 
     /// The datalogic engine underneath.
@@ -300,14 +342,71 @@ impl ExprEngine {
     }
 }
 
+/// Converts a compile-time `datalogic_rs::Error` into [`Error`], preserving
+/// both the typed source and the structured [`ExprCause`].
+fn compile_error(e: datalogic_rs::Error, reads_secret: bool) -> Error {
+    let e = if reads_secret {
+        sanitize_secret_error(e)
+    } else {
+        e
+    };
+    let cause = ExprCause::from_datalogic(&e, None, None);
+    let msg = e.to_string();
+    Error::new(ErrorKind::Compile, msg)
+        .with_source(e)
+        .with_expr_cause(cause)
+}
+
 /// Classifies a datalogic evaluation failure: a spent budget is its own kind.
-fn eval_error(e: datalogic_rs::Error) -> Error {
+fn eval_error(
+    e: datalogic_rs::Error,
+    logic: Option<&Logic>,
+    ops: Option<u64>,
+    reads_secret: bool,
+) -> Error {
+    let e = if reads_secret {
+        sanitize_secret_error(e)
+    } else {
+        e
+    };
     let kind = if matches!(e.kind, datalogic_rs::ErrorKind::BudgetExceeded { .. }) {
         ErrorKind::Budget
     } else {
         ErrorKind::Eval
     };
-    Error::new(kind, e.to_string())
+    let cause = ExprCause::from_datalogic(&e, logic, ops);
+    let msg = e.to_string();
+    Error::new(kind, msg).with_source(e).with_expr_cause(cause)
+}
+
+/// Redacts payload-bearing variants of a `datalogic_rs::Error` produced by an
+/// expression that reads `$secret`, preventing secret values from leaking via
+/// `throw`, parse errors, or custom operator messages.
+fn sanitize_secret_error(mut e: datalogic_rs::Error) -> datalogic_rs::Error {
+    match &mut e.kind {
+        datalogic_rs::ErrorKind::Thrown(v) => {
+            *v = OwnedDataValue::Null;
+        }
+        datalogic_rs::ErrorKind::ParseError(s)
+        | datalogic_rs::ErrorKind::FormatError(s)
+        | datalogic_rs::ErrorKind::TypeError(s) => {
+            *s = std::borrow::Cow::Borrowed("<redacted>");
+        }
+        datalogic_rs::ErrorKind::Custom(_) => {
+            let op = e.operator().map(str::to_owned);
+            let ids = e.node_ids().to_vec();
+            let mut redacted = datalogic_rs::Error::custom_message("<redacted>");
+            if let Some(op) = op {
+                redacted = redacted.with_operator(op);
+            }
+            if !ids.is_empty() {
+                redacted = redacted.with_node_ids(ids);
+            }
+            return redacted;
+        }
+        _ => {}
+    }
+    e
 }
 
 /// Builds an [`ExprEngine`].

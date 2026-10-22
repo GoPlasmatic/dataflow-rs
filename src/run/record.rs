@@ -33,8 +33,8 @@
 use super::engine::{metadata, slots};
 use super::interp::RunEnv;
 use super::message::{AuditEntry, keeps_entries, record_audit};
-use super::policy::{Decision, Flow};
-use crate::base::{Change, Error, Instant};
+use super::policy::{Decision, Flow, RecordMeta};
+use crate::base::{Change, Error, ErrorRecord, Instant};
 use crate::expr::Path;
 use crate::function::task_record;
 use crate::observe::{Event, StepResult};
@@ -163,16 +163,17 @@ pub(crate) fn record<'p>(
     let Decision {
         status,
         record,
+        meta,
         flow,
     } = decision;
     #[cfg(test)]
     super::tests::completed(env, &done, status, &flow);
     if env.capture.is_watched() || done.marked {
-        // The decision's flow is `Fail` or `Stop`: the trace's `Failed`.
-        let failed = matches!(flow, Flow::Fail(_) | Flow::Stop(_));
-        watched(rc, env, wf, done, status, record, failed);
+        // The decision's flow is `Fail`, `Abort` or `Stop`: the trace's `Failed`.
+        let failed = matches!(flow, Flow::Fail(_) | Flow::Abort(_) | Flow::Stop(_));
+        watched(rc, env, wf, done, status, record, meta, failed);
     } else {
-        plain(rc, env, done.task, done.stamp, status, record);
+        plain(rc, env, done.task, done.stamp, status, record, meta);
     }
     flow
 }
@@ -186,6 +187,7 @@ pub(crate) fn record<'p>(
 ///
 /// Returns the `Change` of `metadata.progress` when the trace keeps changes.
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 fn record_core<'p>(
     rc: &mut RunContext<'_, 'p>,
     env: &mut RunEnv<'_, 'p>,
@@ -193,6 +195,7 @@ fn record_core<'p>(
     stamp: Stamp,
     status: u16,
     record: Option<(Cow<'static, str>, String)>,
+    meta: Option<RecordMeta>,
     audit_changes: impl FnOnce(&mut RunEnv<'_, 'p>) -> Vec<Change>,
 ) -> Option<Change> {
     // A mode that keeps nothing builds no entry for `record_audit` to drop.
@@ -210,7 +213,7 @@ fn record_core<'p>(
         )
     });
     if let Some(record) = record {
-        push_record(env, ids, stamp, record);
+        push_record(env, ids, stamp, record, meta);
     }
     progress_change
 }
@@ -226,10 +229,11 @@ fn plain<'p>(
     stamp: Stamp,
     status: Option<u16>,
     record: Option<(Cow<'static, str>, String)>,
+    meta: Option<RecordMeta>,
 ) {
     if let Some(status) = status {
         let ids = env.ids(task);
-        record_core(rc, env, ids, stamp, status, record, |env| {
+        record_core(rc, env, ids, stamp, status, record, meta, |env| {
             std::mem::take(&mut env.changes)
         });
     }
@@ -268,10 +272,15 @@ fn push_record(
     ids: TaskIds<'_>,
     stamp: Stamp,
     (code, message): (Cow<'static, str>, String),
+    meta: Option<RecordMeta>,
 ) {
     let now = env.now_text();
     let mut record = task_record(code, message, ids.workflow, ids.task, now);
     record.element_index = stamp.element_index;
+    if let Some((cause, site)) = meta {
+        record.cause = cause;
+        record.site = site;
+    }
     env.errors.push(record);
 }
 
@@ -279,6 +288,7 @@ fn push_record(
 /// everything the recorder makes.
 #[cold]
 #[inline(never)]
+#[allow(clippy::too_many_arguments)]
 fn watched<'p>(
     rc: &mut RunContext<'_, 'p>,
     env: &mut RunEnv<'_, 'p>,
@@ -286,6 +296,7 @@ fn watched<'p>(
     done: Completed,
     status: Option<u16>,
     record: Option<(Cow<'static, str>, String)>,
+    meta: Option<RecordMeta>,
     failed: bool,
 ) {
     let Completed {
@@ -308,7 +319,7 @@ fn watched<'p>(
     // it.
     let prelude = changes.len();
     if let Some(status) = status {
-        let progress = record_core(rc, env, ids, stamp, status, record, |env| {
+        let progress = record_core(rc, env, ids, stamp, status, record, meta, |env| {
             if env.capture.audit() {
                 // When the trace wants them too, the audit gets a copy.
                 let mut changes = if traced {
@@ -401,6 +412,27 @@ pub(crate) fn workflow_failure(env: &mut RunEnv<'_, '_>, error: &Error) {
     record.stamp(workflow_id, None, now, None);
     if env.watch.trace.is_some() {
         let mut step = env.workflow_step(StepResult::Failed);
+        #[cfg(test)]
+        super::tests::on_trace_work();
+        step.errors = vec![record.clone()];
+        env.push_step(step);
+    }
+    env.errors.push(record);
+}
+
+/// Records a task condition failure under `ConditionErrorPolicy::Stop`:
+/// pushes an [`ErrorRecord`] stamped with the workflow and task ids, and in a
+/// traced run pushes a `Failed` task step carrying that record, without
+/// fabricating a task execution audit entry or progress write.
+pub(crate) fn task_condition_failure(env: &mut RunEnv<'_, '_>, task: u32, error: &Error) {
+    let mut record = ErrorRecord::from(error);
+    let ids = env.ids(task);
+    let workflow_id = Arc::clone(ids.workflow);
+    let task_id = Arc::clone(ids.task);
+    let now = env.now_text();
+    record.stamp(&workflow_id, Some(&task_id), now, None);
+    if env.watch.trace.is_some() {
+        let mut step = env.task_step(task, StepResult::Failed);
         #[cfg(test)]
         super::tests::on_trace_work();
         step.errors = vec![record.clone()];

@@ -1,6 +1,7 @@
 //! The engine: a [`Program`] and its config, run over messages.
 
 use super::RunStatus;
+use super::budget::{ConditionErrorPolicy, TaskBudget};
 use super::builder::EngineBuilder;
 use super::cancel::{Limits, timers_available};
 use super::error_context::ErrorContext;
@@ -36,6 +37,10 @@ pub struct EngineConfig {
     /// context, and how many are kept. `None` by default: nothing is
     /// mirrored, and nothing is reset at run start.
     pub error_context: Option<ErrorContext>,
+    /// Engine-wide default for how condition evaluation errors are handled
+    /// when [`RunOptions::condition_error_policy`] is `None`. Defaults to
+    /// [`ConditionErrorPolicy::Skip`].
+    pub condition_error_policy: ConditionErrorPolicy,
 }
 
 impl EngineConfig {
@@ -51,6 +56,20 @@ impl EngineConfig {
     pub fn error_context(mut self, ec: ErrorContext) -> Self {
         self.error_context = Some(ec);
         self
+    }
+
+    /// Sets the engine-wide default for how condition evaluation errors are
+    /// handled.
+    #[must_use]
+    pub fn condition_error_policy(mut self, policy: ConditionErrorPolicy) -> Self {
+        self.condition_error_policy = policy;
+        self
+    }
+
+    /// Alias for [`Self::condition_error_policy`].
+    #[must_use]
+    pub fn with_condition_error_policy(self, policy: ConditionErrorPolicy) -> Self {
+        self.condition_error_policy(policy)
     }
 }
 
@@ -229,6 +248,10 @@ impl Engine {
         // A bucket above 99 is served as 99, as in 3.x: the bucket space is
         // `0..100`, and `[x, 100)` is the range that serves the rest.
         let bucket = opts.routing_bucket.map(|b| b.min(Rollout::MAX_BUCKET));
+        let condition_error_policy = opts
+            .condition_error_policy
+            .unwrap_or(self.inner.config.condition_error_policy);
+        let budget = TaskBudget::new(opts.task_budget, opts.expr_ops_budget, opts.accountant);
         // How the run ended, once a workflow stopped it: the loop's value,
         // so the run's future holds no status across its workflows.
         let stopped = 'run: {
@@ -262,6 +285,8 @@ impl Engine {
                         cancel: opts.cancel,
                         timers,
                     },
+                    condition_error_policy,
+                    budget: &budget,
                     ops,
                     exprs: program.registry().exprs(),
                     payload: parts.payload,

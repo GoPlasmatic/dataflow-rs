@@ -1,10 +1,11 @@
 //! `validation`'s config: rules, each a condition and the error recorded when
 //! it fails.
 
-use crate::base::{EVALUATION_ERROR, ErrorKind, Result, VALIDATION_ERROR};
+use crate::base::{EVALUATION_ERROR, ErrorKind, ErrorSite, Result, SiteKind, VALIDATION_ERROR};
 use crate::expr::Expr;
 use crate::function::{FunctionConfig, Outcome, SyncCtx};
 use ::log::{debug, error};
+use std::sync::Arc;
 
 /// `validation`'s input.
 #[derive(Debug, FunctionConfig)]
@@ -38,35 +39,68 @@ impl ValidationConfig {
         let mut passed = true;
         for (idx, rule) in self.rules.iter().enumerate() {
             debug!("Processing validation rule {idx}");
-            let (code, text) = match cx.test(&rule.logic) {
+            let rule_site = |cx: &SyncCtx<'_, '_, 'p>, kind: SiteKind, leaf: &'static str| {
+                let path = cx
+                    .task_path
+                    .join("function")
+                    .join("input")
+                    .join("rules")
+                    .join(idx)
+                    .join(leaf);
+                ErrorSite {
+                    rule_index: Some(idx),
+                    ..cx.site(kind, path)
+                }
+            };
+            let (code, text, cause, site) = match cx.test(&rule.logic) {
                 Ok(true) => {
                     debug!("Validation passed for rule {idx}");
                     continue;
                 }
                 // A message that fails to render still reports the failure:
                 // the rule did fail.
-                Ok(false) => (
-                    VALIDATION_ERROR,
-                    match cx.eval(&rule.message) {
-                        Ok(text) => text.into_owned(),
-                        Err(e) if e.kind() == &ErrorKind::Budget => return Err(e),
+                Ok(false) => {
+                    let (msg, cause, site) = match cx.eval(&rule.message) {
+                        Ok(text) => (
+                            text.into_owned(),
+                            None,
+                            rule_site(cx, SiteKind::ValidationRule, "logic"),
+                        ),
+                        Err(e) if e.kind() == &ErrorKind::Budget => {
+                            let site = rule_site(cx, SiteKind::ValidationMessage, "message");
+                            return Err(e.with_site(site));
+                        }
                         Err(e) => {
                             error!("Validation: rule {idx} message failed to render: {e:?}");
-                            "Validation failed".to_owned()
+                            (
+                                "Validation failed".to_owned(),
+                                e.expr_cause_arc(),
+                                rule_site(cx, SiteKind::ValidationMessage, "message"),
+                            )
                         }
-                    },
-                ),
-                Err(e) if e.kind() == &ErrorKind::Budget => return Err(e),
+                    };
+                    (VALIDATION_ERROR, msg, cause, site)
+                }
+                Err(e) if e.kind() == &ErrorKind::Budget => {
+                    let site = rule_site(cx, SiteKind::ValidationRule, "logic");
+                    return Err(e.with_site(site));
+                }
                 Err(e) => {
                     error!("Validation: Error evaluating rule {idx}: {e:?}");
+                    let cause = e.expr_cause_arc();
+                    let site = rule_site(cx, SiteKind::ValidationRule, "logic");
                     (
                         EVALUATION_ERROR,
                         format!("Failed to evaluate rule {idx}: {e}"),
+                        cause,
+                        site,
                     )
                 }
             };
             passed = false;
-            let record = cx.record(code, text);
+            let mut record = cx.record(code, text);
+            record.cause = cause;
+            record.site = Some(Arc::new(site));
             cx.errors.push(record);
         }
         Ok(if passed {

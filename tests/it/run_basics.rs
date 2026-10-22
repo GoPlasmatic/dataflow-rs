@@ -945,3 +945,438 @@ async fn an_append_past_the_last_index_fails_the_mapping() {
         .and_then(|v| v.as_array().map(<[_]>::len));
     assert_eq!(list, Some(cap));
 }
+
+#[tokio::test]
+async fn condition_error_policy_skip_vs_stop_across_workflow_group_task_and_filter() {
+    use dataflow_rs::run::{ConditionErrorPolicy, SiteKind};
+
+    let div_zero = json!({ "/": [1, { "var": "data.zero" }] });
+    let trail = append("trail", "after");
+
+    // 1. Workflow condition error
+    let wf_cond = [
+        workflow(
+            "w1",
+            &[
+                ("condition", div_zero.clone()),
+                ("on_failure", json!("continue")),
+            ],
+            vec![append("t1", "w1")],
+        ),
+        workflow("w2", &[], vec![trail.clone()]),
+    ];
+    let e = engine(&wf_cond);
+    let mut m = message(json!({ "zero": 0 }));
+    let run = e.run(&mut m).await;
+    assert!(matches!(run.status(), RunStatus::Completed));
+    assert_eq!(json_of(&m)["context"]["data"]["order"], json!(["after"]));
+    let first_wf = run.workflows().next().unwrap();
+    let Selection::ConditionFailed(sel_err) = first_wf.selection else {
+        panic!("expected ConditionFailed, got {first_wf:?}");
+    };
+    assert_eq!(
+        sel_err.expr_cause().map(|c| c.code),
+        Some(dataflow_rs::datalogic_rs::ErrorCode::Thrown)
+    );
+    assert_eq!(
+        sel_err.site().map(|s| s.kind),
+        Some(SiteKind::WorkflowCondition)
+    );
+
+    let mut m = message(json!({ "zero": 0 }));
+    let run = e
+        .run_with(
+            &mut m,
+            &RunOptions::default().condition_error_policy(ConditionErrorPolicy::Stop),
+        )
+        .await;
+    let RunStatus::Stopped(stop_err) = run.status() else {
+        panic!("expected Stopped under ConditionErrorPolicy::Stop, got {run:?}");
+    };
+    assert_eq!(
+        stop_err.site().map(|s| s.kind),
+        Some(SiteKind::WorkflowCondition)
+    );
+    assert_eq!(
+        stop_err.expr_cause().map(|c| c.code),
+        Some(dataflow_rs::datalogic_rs::ErrorCode::Thrown)
+    );
+    assert!(
+        json_of(&m)["context"]["data"]["order"].is_null(),
+        "w2 must not run when w1's condition stops the run"
+    );
+
+    // 2. Group condition error (even with on_failure: continue)
+    let group_cond = [
+        workflow(
+            "w1",
+            &[("on_failure", json!("continue"))],
+            vec![
+                json!({
+                    "id": "g1",
+                    "condition": div_zero.clone(),
+                    "tasks": [append("inside", "inside")]
+                }),
+                append("after_group", "after_group"),
+            ],
+        ),
+        workflow("w2", &[], vec![trail.clone()]),
+    ];
+    let e = engine(&group_cond);
+    let mut m = message(json!({ "zero": 0 }));
+    let run = e.run(&mut m).await;
+    assert!(matches!(run.status(), RunStatus::Completed));
+    assert_eq!(
+        json_of(&m)["context"]["data"]["order"],
+        json!(["after_group", "after"])
+    );
+
+    let mut m = message(json!({ "zero": 0 }));
+    let run = e
+        .run_with(
+            &mut m,
+            &RunOptions::default().condition_error_policy(ConditionErrorPolicy::Stop),
+        )
+        .await;
+    let RunStatus::Stopped(stop_err) = run.status() else {
+        panic!("expected Stopped on group condition error: {run:?}");
+    };
+    assert_eq!(
+        stop_err.site().map(|s| s.kind),
+        Some(SiteKind::GroupCondition)
+    );
+    assert_eq!(
+        stop_err.site().and_then(|s| s.group_id.as_deref()),
+        Some("g1")
+    );
+    assert!(json_of(&m)["context"]["data"]["order"].is_null());
+
+    // 3. Task condition error (even with on_failure: continue)
+    let task_cond = [
+        workflow(
+            "w1",
+            &[("on_failure", json!("continue"))],
+            vec![
+                {
+                    let mut t = append("t1", "t1");
+                    t["condition"] = div_zero.clone();
+                    t["on_failure"] = json!("continue");
+                    t
+                },
+                append("after_task", "after_task"),
+            ],
+        ),
+        workflow("w2", &[], vec![trail.clone()]),
+    ];
+    let e = engine(&task_cond);
+    let mut m = message(json!({ "zero": 0 }));
+    let run = e.run(&mut m).await;
+    assert!(matches!(run.status(), RunStatus::Completed));
+    assert_eq!(
+        json_of(&m)["context"]["data"]["order"],
+        json!(["after_task", "after"])
+    );
+
+    let mut m = message(json!({ "zero": 0 }));
+    let run = e
+        .run_with(
+            &mut m,
+            &RunOptions::default().condition_error_policy(ConditionErrorPolicy::Stop),
+        )
+        .await;
+    let RunStatus::Stopped(stop_err) = run.status() else {
+        panic!("expected Stopped on task condition error: {run:?}");
+    };
+    assert_eq!(
+        stop_err.site().map(|s| s.kind),
+        Some(SiteKind::TaskCondition)
+    );
+    assert_eq!(
+        stop_err.site().and_then(|s| s.task_id.as_deref()),
+        Some("t1")
+    );
+    assert!(json_of(&m)["context"]["data"]["order"].is_null());
+
+    // 4. Filter condition error (even with on_reject: skip and on_failure: continue)
+    let filter_cond = [
+        workflow(
+            "w1",
+            &[("on_failure", json!("continue"))],
+            vec![
+                json!({
+                    "id": "f1",
+                    "on_failure": "continue",
+                    "function": {
+                        "name": "filter",
+                        "input": {
+                            "condition": div_zero,
+                            "on_reject": "skip"
+                        }
+                    }
+                }),
+                append("after_filter", "after_filter"),
+            ],
+        ),
+        workflow("w2", &[], vec![trail]),
+    ];
+    let e = engine(&filter_cond);
+    let mut m = message(json!({ "zero": 0 }));
+    let run = e.run(&mut m).await;
+    assert!(matches!(run.status(), RunStatus::CompletedWithErrors));
+    assert_eq!(
+        json_of(&m)["context"]["data"]["order"],
+        json!(["after_filter", "after"])
+    );
+    assert_eq!(m.errors()[0].code, "EVALUATION_ERROR");
+    assert_eq!(
+        m.errors()[0].site().map(|s| s.kind),
+        Some(SiteKind::FilterCondition)
+    );
+    assert_eq!(
+        m.errors()[0].cause().map(|c| c.code),
+        Some(dataflow_rs::datalogic_rs::ErrorCode::Thrown)
+    );
+
+    // EngineConfig default Stop policy also halts filter condition errors.
+    let e_stop = Engine::builder()
+        .config(EngineConfig::default().condition_error_policy(ConditionErrorPolicy::Stop))
+        .workflow_json(&filter_cond[0])
+        .workflow_json(&filter_cond[1])
+        .build()
+        .unwrap();
+    let mut m = message(json!({ "zero": 0 }));
+    let run = e_stop.run(&mut m).await;
+    let RunStatus::Stopped(stop_err) = run.status() else {
+        panic!("expected Stopped on filter condition error: {run:?}");
+    };
+    assert_eq!(
+        stop_err.site().map(|s| s.kind),
+        Some(SiteKind::FilterCondition)
+    );
+    assert!(json_of(&m)["context"]["data"]["order"].is_null());
+}
+
+#[tokio::test]
+async fn structured_error_sites_and_causes_attach_to_map_and_validation_records() {
+    use dataflow_rs::run::SiteKind;
+
+    let div_zero = json!({ "/": [1, { "var": "data.zero" }] });
+    let w = workflow(
+        "w",
+        &[("on_failure", json!("continue"))],
+        vec![
+            json!({
+                "id": "v1",
+                "function": {
+                    "name": "validation",
+                    "input": {
+                        "rules": [
+                            { "logic": true, "message": "ok" },
+                            { "logic": div_zero.clone(), "message": "rule 1 boom" }
+                        ]
+                    }
+                }
+            }),
+            json!({
+                "id": "m1",
+                "on_failure": "continue",
+                "function": {
+                    "name": "map",
+                    "input": {
+                        "mappings": [
+                            { "path": "data.good", "logic": 1 },
+                            { "path": "data.bad", "logic": div_zero }
+                        ]
+                    }
+                }
+            }),
+        ],
+    );
+    let e = engine(&[w]);
+    let mut m = message(json!({ "zero": 0 }));
+    let run = e.run(&mut m).await;
+    assert!(matches!(run.status(), RunStatus::CompletedWithErrors));
+
+    let val_rec = m
+        .errors()
+        .iter()
+        .find(|r| r.code == "EVALUATION_ERROR")
+        .expect("validation rule evaluation error recorded");
+    let val_site = val_rec.site().expect("validation site attached");
+    assert_eq!(val_site.kind, SiteKind::ValidationRule);
+    assert_eq!(&*val_site.workflow_id, "w");
+    assert_eq!(val_site.task_id.as_deref(), Some("v1"));
+    assert_eq!(val_site.rule_index, Some(1));
+    assert_eq!(
+        val_rec.cause().map(|c| c.code),
+        Some(dataflow_rs::datalogic_rs::ErrorCode::Thrown)
+    );
+
+    let map_rec = m
+        .errors()
+        .iter()
+        .find(|r| r.code == "MAPPING_ERROR")
+        .expect("mapping error recorded");
+    let map_site = map_rec.site().expect("mapping site attached");
+    assert_eq!(map_site.kind, SiteKind::MappingLogic);
+    assert_eq!(&*map_site.workflow_id, "w");
+    assert_eq!(map_site.task_id.as_deref(), Some("m1"));
+    assert_eq!(map_site.mapping_index, Some(1));
+    assert_eq!(map_site.target_path.as_deref(), Some("data.bad"));
+    assert_eq!(
+        map_rec.cause().map(|c| c.code),
+        Some(dataflow_rs::datalogic_rs::ErrorCode::Thrown)
+    );
+}
+
+#[tokio::test]
+async fn task_budget_and_run_accountant_enforce_dispatch_limits_and_occupancy() {
+    use dataflow_rs::run::{DispatchKind, OccupancyGuard, RunAccountant};
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Default)]
+    struct TestAccountant {
+        dispatches: Mutex<Vec<String>>,
+        custom: Mutex<Vec<(String, u64)>>,
+        active: Arc<AtomicUsize>,
+        max_active: AtomicUsize,
+        drops: Arc<AtomicUsize>,
+        fail_after: Option<usize>,
+    }
+
+    impl RunAccountant for TestAccountant {
+        fn before_task_dispatch(&self, kind: DispatchKind<'_>) -> Result<OccupancyGuard<'_>> {
+            let mut dispatches = self.dispatches.lock().unwrap();
+            if self.fail_after.is_some_and(|cap| dispatches.len() >= cap) {
+                return Err(dataflow_rs::Error::budget("accountant rejected dispatch"));
+            }
+            let tag = match kind {
+                DispatchKind::InlineBuiltin {
+                    workflow_id,
+                    task_id,
+                    function,
+                } => {
+                    format!("builtin:{workflow_id}:{task_id}:{function}")
+                }
+                DispatchKind::HostTask {
+                    workflow_id,
+                    task_id,
+                    function,
+                } => {
+                    format!("host:{workflow_id}:{task_id}:{function}")
+                }
+                DispatchKind::LoopStep {
+                    workflow_id,
+                    iteration,
+                } => {
+                    format!("loop:{workflow_id}:{iteration}")
+                }
+                DispatchKind::ForEachElement {
+                    workflow_id,
+                    task_id,
+                    index,
+                } => {
+                    format!("foreach:{workflow_id}:{task_id}:{index}")
+                }
+            };
+            dispatches.push(tag);
+            let cur = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_active.fetch_max(cur, Ordering::SeqCst);
+            let active = Arc::clone(&self.active);
+            let drops = Arc::clone(&self.drops);
+            Ok(OccupancyGuard::new(move || {
+                active.fetch_sub(1, Ordering::SeqCst);
+                drops.fetch_add(1, Ordering::SeqCst);
+            }))
+        }
+
+        fn charge_custom(&self, kind: &str, units: u64) -> Result<()> {
+            self.custom.lock().unwrap().push((kind.to_owned(), units));
+            Ok(())
+        }
+    }
+
+    struct BillableHost;
+
+    impl Function for BillableHost {
+        type Config = ();
+
+        async fn call(&self, ctx: &mut Ctx<'_>, _cfg: &()) -> Result<Outcome> {
+            if let Some(acc) = ctx.accountant() {
+                acc.charge_custom("db_rows", 3)?;
+            }
+            Ok(Outcome::Ok)
+        }
+    }
+
+    let w = json!({
+        "id": "w",
+        "on_failure": "continue",
+        "tasks": [
+            append("b1", "one"),
+            {
+                "id": "h1",
+                "function": { "name": "billable", "input": {} }
+            },
+            {
+                "id": "fan",
+                "for_each": { "over": { "var": "data.items" }, "as": "item" },
+                "function": { "name": "billable", "input": {} }
+            }
+        ]
+    });
+    let e = Engine::builder()
+        .register("billable", BillableHost)
+        .workflow_json(&w)
+        .build()
+        .unwrap();
+
+    // 1. Accountant observes InlineBuiltin, HostTask, and ForEachElement dispatches,
+    // custom charges via `Ctx::accountant()`, and drops all OccupancyGuards.
+    let acc = TestAccountant::default();
+    let mut m = message(json!({ "items": ["x", "y"] }));
+    let run = e
+        .run_with(&mut m, &RunOptions::default().accountant(&acc))
+        .await;
+    assert!(matches!(run.status(), RunStatus::Completed), "{run:?}");
+    assert_eq!(acc.active.load(Ordering::SeqCst), 0);
+    assert_eq!(acc.drops.load(Ordering::SeqCst), 4);
+    assert_eq!(
+        *acc.dispatches.lock().unwrap(),
+        vec![
+            "builtin:w:b1:map",
+            "host:w:h1:billable",
+            "foreach:w:fan:0",
+            "foreach:w:fan:1",
+        ]
+    );
+    assert_eq!(
+        *acc.custom.lock().unwrap(),
+        vec![
+            ("db_rows".to_owned(), 3),
+            ("db_rows".to_owned(), 3),
+            ("db_rows".to_owned(), 3),
+        ]
+    );
+
+    // 2. `with_task_budget(2)` allows `b1` (1) and `h1` (2), then halts the run
+    // with `BUDGET_EXCEEDED` before the first `for_each` element (3) runs,
+    // even when `on_failure: continue` is set.
+    let acc2 = TestAccountant::default();
+    let mut m = message(json!({ "items": ["x", "y"] }));
+    let run = e
+        .run_with(
+            &mut m,
+            &RunOptions::default().with_task_budget(2).accountant(&acc2),
+        )
+        .await;
+    let RunStatus::Stopped(err) = run.status() else {
+        panic!("expected Stopped on task_budget exhaustion: {run:?}");
+    };
+    assert_eq!(err.kind(), &ErrorKind::Budget);
+    assert_eq!(err.code(), "BUDGET_EXCEEDED");
+    assert_eq!(acc2.active.load(Ordering::SeqCst), 0);
+    assert_eq!(acc2.drops.load(Ordering::SeqCst), 2);
+    assert_eq!(acc2.custom.lock().unwrap().len(), 1);
+}

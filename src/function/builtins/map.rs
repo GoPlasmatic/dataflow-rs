@@ -3,11 +3,14 @@
 //! The rules between a mapping's keys are v3's (`AuthoredMapping::problem`),
 //! message for message, kept for compatibility.
 
-use crate::base::{Change, Error, ErrorKind, IssueCode, MAPPING_ERROR, Result};
+use crate::base::{
+    Change, Error, ErrorKind, ErrorSite, ExprCause, IssueCode, MAPPING_ERROR, Result, SiteKind,
+};
 use crate::expr::arena::with_arena;
 use crate::expr::rules::{self, Shape};
 use crate::expr::{CompileCx, Expr, ExprEngine, MAX_ARRAY_INDEX, Path};
 use crate::function::{FunctionConfig, Outcome, SyncCtx};
+use crate::run::TaskBudget;
 use crate::state::{Edit, kind};
 use ::log::error;
 use datavalue::{DataValue, OwnedDataValue};
@@ -181,14 +184,15 @@ impl MapConfig {
         if cx.capture {
             cx.changes.reserve(self.mappings.len());
         }
-        let (exprs, capture, traced) = (cx.exprs, cx.capture, cx.traced);
+        let (exprs, budget_ref, capture, traced) = (cx.exprs, cx.budget, cx.capture, cx.traced);
         let (changes, marked) = (&mut *cx.changes, &mut cx.marked);
         let ends = cx.mapping_ends.as_deref_mut();
-        let mut failures: Vec<(usize, &Mapping, Option<Arc<str>>, String)> = Vec::new();
+        let mut failures: Vec<MappingFailure<'_>> = Vec::new();
         let budget = cx.rc.edit(|e| {
             let mut w = Writer {
                 e,
                 exprs,
+                budget: budget_ref,
                 capture,
                 traced,
                 changes,
@@ -200,22 +204,47 @@ impl MapConfig {
                 w.end();
                 if let Err(failure) = applied {
                     match *failure {
-                        Failed::Budget(err) => return Err(err),
-                        Failed::Mapping { path, reason } => {
-                            failures.push((i, mapping, path, reason));
+                        Failed::Budget(err, kind) => return Err((i, mapping, err, kind)),
+                        Failed::Mapping {
+                            path,
+                            reason,
+                            cause,
+                            site_kind,
+                        } => {
+                            failures.push(MappingFailure {
+                                index: i,
+                                mapping,
+                                path,
+                                reason,
+                                cause,
+                                site_kind,
+                            });
                         }
                     }
                 }
             }
             Ok(())
         });
-        budget?;
-        for (i, mapping, path, reason) in failures {
+        if let Err((i, mapping, err, kind)) = budget {
+            let site = mapping_site(
+                cx,
+                i,
+                mapping,
+                mapping.path.constant().map(|p| p.dotted()),
+                kind,
+            );
+            return Err(err.with_site(site));
+        }
+        for f in failures {
             failed = true;
-            let message = format!("mappings[{i}] ({}): {reason}", mapping.describe());
+            let i = f.index;
+            let message = format!("mappings[{i}] ({}): {}", f.mapping.describe(), f.reason);
             error!("Map: {message}");
             let mut record = cx.record(MAPPING_ERROR, message);
-            record.path = path.map(|path| path.to_string());
+            let site = mapping_site(cx, i, f.mapping, f.path.as_ref(), f.site_kind);
+            record.path = f.path.map(|path| path.to_string());
+            record.cause = f.cause;
+            record.site = Some(Arc::new(site));
             cx.errors.push(record);
         }
         Ok(if failed {
@@ -223,6 +252,43 @@ impl MapConfig {
         } else {
             Outcome::Ok
         })
+    }
+}
+
+struct MappingFailure<'m> {
+    index: usize,
+    mapping: &'m Mapping,
+    path: Option<Arc<str>>,
+    reason: String,
+    cause: Option<Arc<ExprCause>>,
+    site_kind: SiteKind,
+}
+
+fn mapping_site(
+    cx: &SyncCtx<'_, '_, '_>,
+    index: usize,
+    mapping: &Mapping,
+    resolved_path: Option<&Arc<str>>,
+    kind: SiteKind,
+) -> ErrorSite {
+    let leaf = match kind {
+        SiteKind::MappingPath => "path",
+        _ => "logic",
+    };
+    let authored = cx
+        .task_path
+        .join("function")
+        .join("input")
+        .join("mappings")
+        .join(index)
+        .join(leaf);
+    let target_path = resolved_path
+        .cloned()
+        .or_else(|| mapping.path.constant().map(|p| Arc::clone(p.dotted())));
+    ErrorSite {
+        mapping_index: Some(index),
+        target_path,
+        ..cx.site(kind, authored)
     }
 }
 
@@ -237,9 +303,11 @@ enum Failed {
     Mapping {
         path: Option<Arc<str>>,
         reason: String,
+        cause: Option<Arc<ExprCause>>,
+        site_kind: SiteKind,
     },
     /// The run's ops budget ran out: the call fails.
-    Budget(Error),
+    Budget(Error, SiteKind),
 }
 
 impl Failed {
@@ -249,17 +317,25 @@ impl Failed {
         Box::new(Self::Mapping {
             path: path.map(|path| Arc::clone(path.dotted())),
             reason,
+            cause: None,
+            site_kind: SiteKind::MappingLogic,
         })
     }
 
     /// An evaluation's failure: the budget's, or the mapping's at `path`
     /// with `what` failing.
     #[cold]
-    fn eval(e: Error, path: Option<&Path>, what: &str) -> Failure {
+    fn eval(e: Error, path: Option<&Path>, what: &str, site_kind: SiteKind) -> Failure {
         if e.kind() == &ErrorKind::Budget {
-            return Box::new(Self::Budget(e));
+            return Box::new(Self::Budget(e, site_kind));
         }
-        Self::at(path, format!("{what} failed to evaluate: {e}"))
+        let cause = e.expr_cause_arc();
+        Box::new(Self::Mapping {
+            path: path.map(|path| Arc::clone(path.dotted())),
+            reason: format!("{what} failed to evaluate: {e}"),
+            cause,
+            site_kind,
+        })
     }
 }
 
@@ -270,6 +346,7 @@ impl Failed {
 struct Writer<'w, 'e, 'q, 'p> {
     e: &'w mut Edit<'e, 'q, 'p>,
     exprs: &'p ExprEngine,
+    budget: &'w TaskBudget<'w>,
     capture: bool,
     /// The run's trace keeps changes: a write v3's audit has no row for is
     /// recorded for it alone.
@@ -324,12 +401,25 @@ impl Mapping {
                 constant: Some(c),
             },
             // Evaluated in the run arena, so the result splices as it is.
-            None => match w.exprs.eval_in(logic.logic(), w.e.root_ref(), w.e.arena()) {
-                Ok(view) => MapValue {
+            None => match w.budget.eval_in(
+                w.exprs,
+                logic.logic(),
+                logic.reads_secret(),
+                w.e.root_ref(),
+                w.e.arena(),
+            ) {
+                Ok((view, _)) => MapValue {
                     view: *view,
                     constant: None,
                 },
-                Err(e) => return Err(Failed::eval(e, self.path.constant(), "the logic")),
+                Err(e) => {
+                    return Err(Failed::eval(
+                        e,
+                        self.path.constant(),
+                        "the logic",
+                        SiteKind::MappingLogic,
+                    ));
+                }
             },
         };
         if result.view.is_null() {
@@ -357,8 +447,8 @@ impl Mapping {
             return Ok(Cow::Borrowed(path));
         }
         let root = w.e.root_ref();
-        with_arena(|arena| w.exprs.eval_view(&self.path, root, arena))
-            .map_err(|e| Failed::eval(e, None, "the destination"))
+        with_arena(|arena| w.budget.eval_view(w.exprs, &self.path, root, arena))
+            .map_err(|e| Failed::eval(e, None, "the destination", SiteKind::MappingPath))
     }
 }
 

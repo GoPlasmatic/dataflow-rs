@@ -20,13 +20,14 @@
 //! A fan-out's elements are host calls too: [`invoke`] is the one call, and
 //! [`fan_out`](super::fan_out::fan_out) settles and records each element.
 
+use super::budget::DispatchKind;
 #[cfg(not(target_arch = "wasm32"))]
 use super::cancel::race;
 use super::cancel::{Limits, Stop};
 use super::interp::RunEnv;
 use super::policy::{self, Flow};
 use super::record::{self, Completed, Stamp, TaskIds};
-use crate::base::{Change, Error, ErrorRecord, Result, TaskIx};
+use crate::base::{Change, Error, ErrorKind, ErrorRecord, ErrorSite, Result, SiteKind, TaskIx};
 use crate::expr::Path;
 use crate::function::{BoundCall, CallInfo, CallLayer, CallStart, Ctx, Next, Outcome, Overlay};
 use crate::program::{CallSite, CompiledWorkflow};
@@ -59,6 +60,7 @@ pub(crate) fn call_start<'c, 'r: 'c, 'p: 'c>(
         binding: None,
         payload: env.payload,
         exprs: env.exprs,
+        budget: env.budget,
         info: env.call_info(wf, site.task, Stamp::sweep(env)),
         deadline: env.limits.deadline,
         cancel: env.limits.cancel,
@@ -322,12 +324,40 @@ pub(crate) async fn call_host<'p>(
     site: &'p CallSite,
     bound: &'p dyn BoundCall,
 ) -> Flow {
+    let meta = &wf.tasks[site.task as usize];
+    let task_site = |env: &RunEnv<'_, 'p>| ErrorSite {
+        kind: SiteKind::Task,
+        workflow_id: Arc::clone(env.workflow_id),
+        task_id: Some(Arc::clone(env.ids(site.task).task)),
+        group_id: None,
+        rule_index: None,
+        mapping_index: None,
+        target_path: None,
+        authored_path: Some(meta.path.clone()),
+        loop_counter: env.frame.loop_counter,
+    };
+    let guard = match env.budget.charge_dispatch(DispatchKind::HostTask {
+        workflow_id: &wf.id,
+        task_id: &meta.id,
+        function: &meta.function,
+    }) {
+        Ok(guard) => guard,
+        Err(e) => {
+            let errors_before = env.errors.len();
+            let e = e.with_site(task_site(env));
+            let task_id = env.ids(site.task).task;
+            let decision = policy::forced_abort(task_id, e);
+            let done = Completed::new(env, site.task, None, None, errors_before, false);
+            return record::record(rc, env, wf, done, decision);
+        }
+    };
     let started = env.watch.timed.then(record::now);
     let invoked = {
         let reader = rc.reader();
         let (start, layers) = call_start(env, reader, wf, site);
         invoke(start, bound, layers, None, env.limits.timers).await
     };
+    drop(guard);
     let elapsed = started.map(record::since);
     // Settled after the call, so the run's future keeps neither across its
     // `.await`: nothing pushes to the message's records while it runs.
@@ -340,7 +370,17 @@ pub(crate) async fn call_host<'p>(
     let task_id = env.ids(site.task).task;
     let decision = match result {
         CallResult::CutShort(stop, error) => policy::cut_short(task_id, stop, &error),
-        CallResult::Returned(result) => policy::decide(site.policy, task_id, result),
+        CallResult::Returned(Err(mut e)) => {
+            if e.site().is_none() {
+                e = e.with_site(task_site(env));
+            }
+            if *e.kind() == ErrorKind::Budget && env.budget.is_run_limited() {
+                policy::forced_abort(task_id, e)
+            } else {
+                policy::decide(site.policy, task_id, Err(e))
+            }
+        }
+        CallResult::Returned(Ok(outcome)) => policy::decide(site.policy, task_id, Ok(outcome)),
     };
     let done = Completed::new(env, site.task, None, elapsed, errors_before, marked);
     record::record(rc, env, wf, done, decision)

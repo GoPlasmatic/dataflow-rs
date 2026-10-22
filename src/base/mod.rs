@@ -14,10 +14,13 @@ pub use cancel::CancelToken;
 pub use change::Change;
 pub use context::Context;
 pub(crate) use context::{ROOTS, exact, in_order, keep_last};
+pub use error::{
+    BudgetCause, Error, ErrorKind, ErrorRecord, ErrorSite, ExprCause, ExprPathStep, Result,
+    SiteKind,
+};
 pub(crate) use error::{
     EVALUATION_ERROR, MAPPING_ERROR, TASK_ERROR, TASK_STATUS_ERROR, VALIDATION_ERROR,
 };
-pub use error::{Error, ErrorKind, ErrorRecord, Result};
 pub use ids::{ProgramId, TaskIx, WorkflowIx};
 pub(crate) use issue::any_rejected;
 pub use issue::{
