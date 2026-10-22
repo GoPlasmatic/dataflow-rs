@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.1] — 2026-10-22
+
+### Added
+
+- **Structured expression causes and workflow error sites (#77)**:
+  - `Error::datalogic_error(&self) -> Option<&datalogic_rs::Error>` and
+    `std::error::Error::source` preserve the typed `datalogic-rs` error across
+    compilation and evaluation failures (redacted when an expression reads
+    `secret`).
+  - `ExprCause`, `ExprPathStep`, `BudgetCause`, `ErrorSite`, and `SiteKind`
+    (re-exported under `dataflow_rs::run`) attach structured expression failure
+    details (`code`, `operator`, `expr_path`, `steps`, `budget`, `ops`) and
+    workflow/task/group/rule/mapping site coordinates to `Error`
+    (`Error::expr_cause`, `Error::site`) and `ErrorRecord`
+    (`ErrorRecord::cause`, `ErrorRecord::site`) without changing wire
+    serialization.
+  - `SharedOperator` now forwards `CustomOperator::info` and
+    `CustomOperator::check` to `datalogic-rs`.
+- **Run-level condition error policy (#76)**:
+  - `ConditionErrorPolicy` (`Skip` default, `Stop` fail-closed) on
+    `EngineConfig::condition_error_policy` and
+    `RunOptions::condition_error_policy`. Under `ConditionErrorPolicy::Stop`,
+    any evaluation or budget failure in a workflow, group, task, loop, or
+    `filter` condition halts the run immediately as `RunStatus::Stopped`,
+    bypassing `on_reject = "skip"` and `on_failure = "continue"`.
+- **Enforceable run budgets and host-owned accounting boundary (#78)**:
+  - `RunAccountant`, `DispatchKind`, and `OccupancyGuard` (under
+    `dataflow_rs::run`), plus `RunOptions::with_task_budget`,
+    `RunOptions::with_expr_ops_budget`, `RunOptions::accountant`,
+    `Ctx::accountant`, and `Error::budget`.
+  - Task and expression budgets are enforced atomically across inline
+    built-ins, host functions, loop sweeps, and `for_each` elements, using
+    `datalogic-rs` 5.9.0's `Engine::evaluate_metered_report` to account for
+    partial operations on both `Ok` and `Err` evaluations.
+
+### Changed
+
+- Upgraded `datalogic-rs` to `5.9.0` and `datavalue-rs` to `0.3.3`.
+
 ## [4.0.0] — 2026-10-20
 
 dataflow-rs 4 is a rewrite of the engine on the contract 3.x established:

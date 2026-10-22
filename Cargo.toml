@@ -133,13 +133,13 @@ members = [".", "wasm", "docs-tests", "corpus", "derive"]
 # A release bumps this line and `ui/package.json`'s version, by hand nowhere
 # else.
 [workspace.package]
-version = "4.0.0"
+version = "4.0.1"
 
 # The two crates.io artifacts, at the engine's version. The root and the wasm
 # crate name them through these entries, so the exact pin lives here once.
 [workspace.dependencies]
-dataflow-rs = { path = ".", version = "=4.0.0" }
-dataflow-rs-derive = { path = "derive", version = "=4.0.0" }
+dataflow-rs = { path = ".", version = "=4.0.1" }
+dataflow-rs-derive = { path = "derive", version = "=4.0.1" }
 
 # Lint policy lives here rather than only in the CI command line, so a local
 # `cargo clippy` and rust-analyzer enforce exactly what CI does. CI still passes
