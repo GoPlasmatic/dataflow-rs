@@ -639,3 +639,11 @@ export function loopDescription(loop: LoopConfig): string {
     `Exits when the bound is reached or the condition goes false.${scratch}`
   );
 }
+
+/**
+ * Returns a new array of workflows sorted by ascending `priority` (lower
+ * number = higher priority = runs first).
+ */
+export function sortWorkflowsByPriority(workflows: readonly Workflow[]): Workflow[] {
+  return [...workflows].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+}

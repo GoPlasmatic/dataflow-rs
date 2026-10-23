@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { Workflow, Task } from '../../../types';
+import { sortWorkflowsByPriority, type Workflow, type Task } from '../../../types';
 import { WorkflowCard } from '../cards';
 import { useExpandedState } from '../hooks';
 
@@ -17,9 +17,7 @@ export function RulesListView({
   defaultExpandedIds,
 }: RulesListViewProps) {
   // Sort workflows by priority
-  const sortedWorkflows = useMemo(() => {
-    return [...workflows].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
-  }, [workflows]);
+  const sortedWorkflows = useMemo(() => sortWorkflowsByPriority(workflows), [workflows]);
 
   const { isExpanded, toggle, expandAll, collapseAll } = useExpandedState(
     defaultExpandedIds ?? (sortedWorkflows.length > 0 ? [sortedWorkflows[0].id] : [])

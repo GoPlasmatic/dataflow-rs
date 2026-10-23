@@ -1,6 +1,7 @@
+import { useMemo } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { Task, Workflow } from '../../../types';
-import { flattenSteps, workflowContinuesOnFailure } from '../../../types';
+import { workflowTasks, workflowContinuesOnFailure } from '../../../types';
 import { TaskRow } from './TaskRow';
 import { ConditionBadge } from './ConditionBadge';
 import { LoopBadge } from './LoopBadge';
@@ -22,7 +23,7 @@ export function WorkflowCard({
 }: WorkflowCardProps) {
   const priorityDisplay = workflow.priority ?? 0;
   // Groups are an authoring convenience; the card lists the tasks that run.
-  const tasks = flattenSteps(workflow.tasks);
+  const tasks = useMemo(() => workflowTasks(workflow), [workflow]);
 
   return (
     <div className={`df-workflow-card ${isExpanded ? 'df-workflow-card-expanded' : ''}`}>

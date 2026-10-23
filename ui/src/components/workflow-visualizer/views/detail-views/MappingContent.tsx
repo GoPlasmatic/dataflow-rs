@@ -14,9 +14,12 @@ export function MappingContent({ selection }: MappingContentProps) {
   const shown = useTaskDebugStep(selection.task, selection.workflow);
 
   // Show the mapping as { path: logic }
-  const visualData: Record<string, JsonLogicValue> = {
-    [describeMappingPath(mapping.path)]: describeMappingValue(mapping),
-  };
+  const visualData = useMemo<Record<string, JsonLogicValue>>(
+    () => ({
+      [describeMappingPath(mapping.path)]: describeMappingValue(mapping),
+    }),
+    [mapping]
+  );
 
   const stepIndex = shown && shown.step.result !== 'skipped' ? shown.stepIndex : -1;
   const contextBefore = shown?.contextBefore;

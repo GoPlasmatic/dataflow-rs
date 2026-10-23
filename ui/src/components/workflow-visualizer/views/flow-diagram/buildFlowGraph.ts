@@ -2,6 +2,7 @@ import { layoutFlowGraph } from './assignBranchSides';
 import type { Node, Edge } from '@xyflow/react';
 import type { Workflow, Task, Step, TaskGroup } from '../../../../types';
 import {
+  flattenSteps,
   groupMembers,
   hasCondition,
   isTaskGroup,
@@ -150,9 +151,12 @@ export function buildFlowGraph(workflow: Workflow): { nodes: Node[]; edges: Edge
       return;
     }
 
+    const firstTask = flattenSteps(groupMembers(group))[0];
     const groupCondId = addNode('condition', {
       label: `${group.name ?? group.id}\nGroup Condition`,
       conditionType: 'task',
+      taskId: firstTask?.id,
+      groupCondition: group.condition,
     });
     connect(groupCondId);
 

@@ -286,7 +286,7 @@ impl<'j> Walk<'j> {
             self.exts.keys().collect::<Vec<_>>()
         );
         let mut lost: Vec<AuthoredPath> = self.exts.drain().map(|(at, _)| at).collect();
-        lost.sort_by_key(ToString::to_string);
+        lost.sort_by_cached_key(ToString::to_string);
         for at in lost {
             self.parse_failed(
                 at,

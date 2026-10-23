@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Layers } from 'lucide-react';
 import type { Workflow } from '../../../types';
-import { workflowTasks } from '../../../types';
+import { sortWorkflowsByPriority, workflowTasks } from '../../../types';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
 import { useDebuggerOptional } from '../context';
 import { TreeNode, WorkflowNode, FolderNode, TREE_COLORS } from '../components';
@@ -47,7 +47,7 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
     const initial = new Set<string>([NODE_IDS.ROOT]);
     getFirstLevelFolderIds(folderTree).forEach((id) => initial.add(id));
 
-    const allWorkflows = [...workflows].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+    const allWorkflows = sortWorkflowsByPriority(workflows);
 
     if (allWorkflows.length > 0) {
       initial.add(NODE_IDS.workflow(allWorkflows[0].id));
@@ -118,6 +118,7 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
       !effectiveDebugContext?.currentStep ||
       effectiveDebugContext.state.currentStepIndex < 0
     ) {
+      lastSelectedRef.current = null;
       return;
     }
 
@@ -145,7 +146,7 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
     }
 
     // Auto-scroll to current step after a short delay (to allow DOM to update)
-    setTimeout(() => {
+    const timerId = setTimeout(() => {
       const currentStepElement =
         treeContainerRef.current?.querySelector('[data-current-step="true"]');
       if (currentStepElement) {
@@ -155,6 +156,8 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
         });
       }
     }, PLAYBACK.AUTO_SCROLL_DELAY_MS);
+
+    return () => clearTimeout(timerId);
   }, [
     debugMode,
     effectiveDebugContext?.currentStep,
@@ -176,13 +179,22 @@ export function TreeView({ workflows, selection, onSelect, debugMode = false }: 
   const totalWorkflowCount = workflows.length;
 
   return (
-    <div ref={treeContainerRef} className={`df-tree-view ${debugMode ? 'df-tree-view-debug' : ''}`}>
+    <div
+      ref={treeContainerRef}
+      className={`df-tree-view ${debugMode ? 'df-tree-view-debug' : ''}`}
+      role="tree"
+      aria-label="Workflows explorer"
+    >
       <TreeNode
         label="Workflows"
         icon={<Layers size={14} />}
         iconColor={TREE_COLORS.workflow}
         isExpanded={isRootExpanded}
-        isSelected={selection.type === 'folder' && selection.name === 'Workflows'}
+        isSelected={
+          selection.type === 'folder' &&
+          selection.name === 'Workflows' &&
+          selection.path === undefined
+        }
         hasChildren={totalWorkflowCount > 0}
         level={0}
         onToggle={() => toggleNode(NODE_IDS.ROOT)}

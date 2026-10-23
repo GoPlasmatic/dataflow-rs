@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Play, CheckCircle, ArrowRight, Check, GitBranch, ExternalLink } from 'lucide-react';
 import type { Workflow, Task, JsonLogicValue } from '../../../types';
-import { flattenSteps, hasCondition } from '../../../types';
+import { sortWorkflowsByPriority, workflowTasks, hasCondition } from '../../../types';
 import { FunctionTypeBadge } from '../cards/FunctionTypeBadge';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
 
@@ -54,9 +54,7 @@ export function WorkflowFlowView({
   highlightedTaskIds,
 }: WorkflowFlowViewProps) {
   // Sort workflows by priority (lower number = higher priority = first)
-  const sortedWorkflows = useMemo(() => {
-    return [...workflows].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
-  }, [workflows]);
+  const sortedWorkflows = useMemo(() => sortWorkflowsByPriority(workflows), [workflows]);
 
   return (
     <div className="df-flow-view">
@@ -97,7 +95,7 @@ export function WorkflowFlowView({
                   </div>
 
                   <div className="df-flow-tasks">
-                    {flattenSteps(workflow.tasks).map((task, index) => {
+                    {workflowTasks(workflow).map((task, index) => {
                       const isTaskSelected = selection?.type === 'task' && selection.task.id === task.id;
                       const isTaskConditionSelected = selection?.type === 'task-condition' && selection.task.id === task.id;
 

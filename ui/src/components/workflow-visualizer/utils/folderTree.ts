@@ -1,4 +1,4 @@
-import type { Workflow } from '../../../types';
+import { sortWorkflowsByPriority, type Workflow } from '../../../types';
 import { NODE_IDS } from '../constants';
 
 /**
@@ -89,7 +89,7 @@ export function buildFolderTree(workflows: Workflow[]): FolderTree {
   };
 
   // Sort workflows by priority first
-  const sortedWorkflows = [...workflows].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+  const sortedWorkflows = sortWorkflowsByPriority(workflows);
 
   for (const workflow of sortedWorkflows) {
     const segments = parsePath(workflowFolderPath(workflow));
@@ -146,7 +146,7 @@ export function collectFolderWorkflows(folder: FolderTreeNode): Workflow[] {
   for (const child of folder.folders.values()) {
     workflows.push(...collectFolderWorkflows(child));
   }
-  return workflows.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+  return sortWorkflowsByPriority(workflows);
 }
 
 /**

@@ -464,7 +464,8 @@ impl<'w> Walk<'w> {
                     step,
                     field: None,
                 };
-                self.hook.expr(site, expr.raw(), &mut self.issues);
+                self.hook
+                    .expr(site, expr.raw(), Some(&expr), &mut self.issues);
                 Some(expr)
             }
             Err(error) => {
@@ -780,7 +781,13 @@ mod tests {
     struct Recorder(Vec<(String, bool, Step)>);
 
     impl Hook for Recorder {
-        fn expr(&mut self, site: Site<'_>, _raw: &Value, _issues: &mut Vec<Issue>) {
+        fn expr(
+            &mut self,
+            site: Site<'_>,
+            _raw: &Value,
+            _compiled: Option<&dyn crate::expr::ResolveExpr>,
+            _issues: &mut Vec<Issue>,
+        ) {
             let step = site.step.map(|(kind, id)| (kind, id.to_owned()));
             self.0.push((site.at.to_string(), site.records, step));
         }

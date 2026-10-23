@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { AlertTriangle, CheckCircle, Layers, Box, FileJson } from 'lucide-react';
 import { countLeafSteps } from '../../types';
 import type { Workflow } from '../../types';
@@ -26,9 +27,13 @@ export function StatusBar({
 
   // `tasks` and `loop.setup` hold *steps*, so a group counts as one element
   // regardless of how many tasks it contains. Descend before counting.
-  const taskCount = workflows.reduce(
-    (sum, w) => sum + countLeafSteps(w.loop?.setup ?? []) + countLeafSteps(w.tasks ?? []),
-    0,
+  const taskCount = useMemo(
+    () =>
+      workflows.reduce(
+        (sum, w) => sum + countLeafSteps(w.loop?.setup ?? []) + countLeafSteps(w.tasks ?? []),
+        0,
+      ),
+    [workflows],
   );
 
   return (

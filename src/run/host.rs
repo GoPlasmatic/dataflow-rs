@@ -27,7 +27,7 @@ use super::cancel::{Limits, Stop};
 use super::interp::RunEnv;
 use super::policy::{self, Flow};
 use super::record::{self, Completed, Stamp, TaskIds};
-use crate::base::{Change, Error, ErrorKind, ErrorRecord, ErrorSite, Result, SiteKind, TaskIx};
+use crate::base::{Change, Error, ErrorKind, ErrorRecord, Result, SiteKind, TaskIx};
 use crate::expr::Path;
 use crate::function::{BoundCall, CallInfo, CallLayer, CallStart, Ctx, Next, Outcome, Overlay};
 use crate::program::{CallSite, CompiledWorkflow};
@@ -325,17 +325,6 @@ pub(crate) async fn call_host<'p>(
     bound: &'p dyn BoundCall,
 ) -> Flow {
     let meta = &wf.tasks[site.task as usize];
-    let task_site = |env: &RunEnv<'_, 'p>| ErrorSite {
-        kind: SiteKind::Task,
-        workflow_id: Arc::clone(env.workflow_id),
-        task_id: Some(Arc::clone(env.ids(site.task).task)),
-        group_id: None,
-        rule_index: None,
-        mapping_index: None,
-        target_path: None,
-        authored_path: Some(meta.path.clone()),
-        loop_counter: env.frame.loop_counter,
-    };
     let guard = match env.budget.charge_dispatch(DispatchKind::HostTask {
         workflow_id: &wf.id,
         task_id: &meta.id,
@@ -344,7 +333,7 @@ pub(crate) async fn call_host<'p>(
         Ok(guard) => guard,
         Err(e) => {
             let errors_before = env.errors.len();
-            let e = e.with_site(task_site(env));
+            let e = e.with_site(env.task_site(SiteKind::Task, site.task, meta.path.clone()));
             let task_id = env.ids(site.task).task;
             let decision = policy::forced_abort(task_id, e);
             let done = Completed::new(env, site.task, None, None, errors_before, false);
@@ -372,7 +361,7 @@ pub(crate) async fn call_host<'p>(
         CallResult::CutShort(stop, error) => policy::cut_short(task_id, stop, &error),
         CallResult::Returned(Err(mut e)) => {
             if e.site().is_none() {
-                e = e.with_site(task_site(env));
+                e = e.with_site(env.task_site(SiteKind::Task, site.task, meta.path.clone()));
             }
             if *e.kind() == ErrorKind::Budget && env.budget.is_run_limited() {
                 policy::forced_abort(task_id, e)

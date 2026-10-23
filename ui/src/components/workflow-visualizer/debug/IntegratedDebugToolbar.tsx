@@ -13,6 +13,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { useDebugger } from '../context';
+import { useDebuggerKeyboardShortcuts } from '../hooks';
 import type { ExecutionError, Run, RunResult, Workflow } from '../../../types';
 import { toExecutionError } from '../../../types';
 import { PLAYBACK } from '../constants';
@@ -190,64 +191,18 @@ export function IntegratedDebugToolbar({
   }, [autoExecute, isEngineReady, workflows, payload, handleExecute]);
 
   // Keyboard shortcuts
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      // Don't handle if in an input/textarea
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) {
-        return;
-      }
-
-      switch (e.key) {
-        case ' ':
-          e.preventDefault();
-          if (playbackState === 'playing') {
-            pause();
-          } else if (hasTrace && !isAtEnd) {
-            play();
-          }
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          if (hasTrace && !isAtEnd) {
-            stepForward();
-          }
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          if (hasTrace && !isAtStart) {
-            stepBackward();
-          }
-          break;
-        case 'Home':
-          e.preventDefault();
-          if (hasTrace) {
-            goToFirst();
-          }
-          break;
-        case 'End':
-          e.preventDefault();
-          if (hasTrace) {
-            goToLast();
-          }
-          break;
-        case 'r':
-          if (e.metaKey || e.ctrlKey) {
-            e.preventDefault();
-            handleReset();
-          }
-          break;
-      }
-    },
-    [playbackState, hasTrace, isAtEnd, isAtStart, play, pause, stepForward, stepBackward, goToFirst, goToLast, handleReset]
-  );
-
-  useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
+  useDebuggerKeyboardShortcuts({
+    playbackState,
+    hasTrace,
+    isAtStart,
+    isAtEnd,
+    play,
+    pause,
+    stepForward,
+    stepBackward,
+    onFirst: goToFirst,
+    onLast: goToLast,
+  });
 
   // Determine status icon
   const getStatusIcon = () => {
@@ -411,7 +366,7 @@ export function IntegratedDebugToolbar({
             className="df-debug-toolbar-btn-action df-debug-toolbar-btn-reset"
             onClick={handleReset}
             disabled={isExecuting}
-            title="Reset (Ctrl+R)"
+            title="Reset"
           >
             <RotateCcw size={12} />
             <span>Reset</span>

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { Layers, GitBranch } from 'lucide-react';
 import type { Workflow, JsonLogicValue } from '../../../types';
 import { hasCondition as isConditional, workflowTasks } from '../../../types';
@@ -34,7 +35,7 @@ export function WorkflowNode({
   // Groups are an authoring convenience; the tree shows the tasks that run —
   // a loop's setup steps first, as they run first. Ids are unique across
   // both lists, so they stay valid React keys.
-  const tasks = workflowTasks(workflow);
+  const tasks = useMemo(() => workflowTasks(workflow), [workflow]);
   const hasTasks = tasks.length > 0;
   const hasChildren = hasCondition || hasTasks;
 

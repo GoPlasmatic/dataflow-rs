@@ -1,6 +1,6 @@
 import { layoutFlowGraph } from './assignBranchSides';
 import type { Node, Edge } from '@xyflow/react';
-import { countLeafSteps, hasCondition, type Workflow } from '../../../../types';
+import { sortWorkflowsByPriority, workflowTasks, hasCondition, type Workflow } from '../../../../types';
 
 const NODE_WIDTH = 260;
 const NODE_HEIGHT_PILL = 40;
@@ -22,7 +22,7 @@ export function buildGroupFlowGraph(workflows: Workflow[]): { nodes: Node[]; edg
   const id = () => `g${nodeId++}`;
 
   // Sort workflows by priority
-  const sorted = [...workflows].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+  const sorted = sortWorkflowsByPriority(workflows);
 
   // Start node
   const startId = id();
@@ -72,7 +72,7 @@ export function buildGroupFlowGraph(workflows: Workflow[]): { nodes: Node[]; edg
         data: {
           workflowName: workflow.name,
           priority: workflow.priority,
-          taskCount: countLeafSteps(workflow.tasks),
+          taskCount: workflowTasks(workflow).length,
           hasCondition: true,
           workflowId: workflow.id,
           loop: workflow.loop,
@@ -136,7 +136,7 @@ export function buildGroupFlowGraph(workflows: Workflow[]): { nodes: Node[]; edg
         data: {
           workflowName: workflow.name,
           priority: workflow.priority,
-          taskCount: countLeafSteps(workflow.tasks),
+          taskCount: workflowTasks(workflow).length,
           hasCondition: false,
           workflowId: workflow.id,
           loop: workflow.loop,

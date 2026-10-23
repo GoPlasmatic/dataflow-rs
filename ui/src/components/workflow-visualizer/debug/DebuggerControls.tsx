@@ -1,4 +1,3 @@
-import { useEffect, useCallback } from 'react';
 import {
   Play,
   Pause,
@@ -9,6 +8,7 @@ import {
   Gauge,
 } from 'lucide-react';
 import { useDebugger } from '../context';
+import { useDebuggerKeyboardShortcuts } from '../hooks';
 
 interface DebuggerControlsProps {
   /** Show compact version */
@@ -35,61 +35,23 @@ export function DebuggerControls({ compact = false, className = '' }: DebuggerCo
     hasTrace,
     progress,
     totalSteps,
+    currentFilteredPosition,
   } = useDebugger();
 
-  const { playbackState, playbackSpeed, currentStepIndex, isExecuting } = state;
+  const { playbackState, playbackSpeed, isExecuting } = state;
 
   // Keyboard shortcuts
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      // Don't handle if in an input/textarea
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) {
-        return;
-      }
-
-      switch (e.key) {
-        case ' ':
-          e.preventDefault();
-          if (playbackState === 'playing') {
-            pause();
-          } else if (hasTrace) {
-            play();
-          }
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          if (hasTrace && !isAtEnd) {
-            stepForward();
-          }
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          if (hasTrace && !isAtStart) {
-            stepBackward();
-          }
-          break;
-        case 'Escape':
-          e.preventDefault();
-          stop();
-          break;
-        case 'r':
-          if (e.metaKey || e.ctrlKey) {
-            e.preventDefault();
-            reset();
-          }
-          break;
-      }
-    },
-    [playbackState, hasTrace, isAtEnd, isAtStart, play, pause, stop, stepForward, stepBackward, reset]
-  );
-
-  useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleKeyDown]);
+  useDebuggerKeyboardShortcuts({
+    playbackState,
+    hasTrace,
+    isAtStart,
+    isAtEnd,
+    play,
+    pause,
+    stepForward,
+    stepBackward,
+    onStop: stop,
+  });
 
   const handleSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSpeed(Number(e.target.value));
@@ -138,7 +100,7 @@ export function DebuggerControls({ compact = false, className = '' }: DebuggerCo
         </button>
 
         <span className="df-debug-step-counter">
-          {currentStepIndex + 1} / {totalSteps}
+          {Math.max(0, currentFilteredPosition + 1)} / {totalSteps}
         </span>
       </div>
     );
@@ -199,7 +161,7 @@ export function DebuggerControls({ compact = false, className = '' }: DebuggerCo
           className="df-debug-btn"
           onClick={reset}
           disabled={!hasTrace || isExecuting}
-          title="Reset (Ctrl+R)"
+          title="Reset"
         >
           <RotateCcw size={20} />
         </button>
@@ -214,7 +176,7 @@ export function DebuggerControls({ compact = false, className = '' }: DebuggerCo
           />
         </div>
         <span className="df-debug-step-counter">
-          Step {currentStepIndex + 1} of {totalSteps}
+          Step {Math.max(0, currentFilteredPosition + 1)} of {totalSteps}
         </span>
       </div>
 

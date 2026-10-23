@@ -54,6 +54,31 @@ export function TreeNode({
     onToggle?.();
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    switch (e.key) {
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        e.stopPropagation();
+        onClick?.();
+        break;
+      case 'ArrowRight':
+        if (hasChildren && !isExpanded) {
+          e.preventDefault();
+          e.stopPropagation();
+          onToggle?.();
+        }
+        break;
+      case 'ArrowLeft':
+        if (hasChildren && isExpanded) {
+          e.preventDefault();
+          e.stopPropagation();
+          onToggle?.();
+        }
+        break;
+    }
+  };
+
   const debugStateClass = debugState ? `df-tree-node-${debugState}` : '';
   const currentClass = isCurrent ? 'df-tree-node-current-step' : '';
 
@@ -65,8 +90,13 @@ export function TreeNode({
       <div
         className={`df-tree-node-content ${isSelected ? 'df-tree-node-selected' : ''}`}
         style={{ paddingLeft: `${level * 16 + 8}px` }}
+        role="treeitem"
+        tabIndex={0}
+        aria-selected={isSelected}
+        aria-expanded={hasChildren ? isExpanded : undefined}
         onMouseDown={handleMouseDown}
         onClick={handleClick}
+        onKeyDown={handleKeyDown}
       >
         <span
           className="df-tree-toggle"

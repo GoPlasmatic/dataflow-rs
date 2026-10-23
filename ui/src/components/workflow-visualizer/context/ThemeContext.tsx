@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useMemo,
   useState,
   useSyncExternalStore,
   ReactNode,
@@ -60,9 +61,13 @@ export function ThemeProvider({ children, defaultTheme = 'system' }: ThemeProvid
     getServerSystemTheme
   );
   const resolvedTheme: 'light' | 'dark' = theme === 'system' ? systemTheme : theme;
+  const contextValue = useMemo(
+    () => ({ theme, resolvedTheme, setTheme }),
+    [theme, resolvedTheme, setTheme],
+  );
 
   return (
-    <ThemeContext.Provider value={{ theme, resolvedTheme, setTheme }}>
+    <ThemeContext.Provider value={contextValue}>
       {children}
     </ThemeContext.Provider>
   );

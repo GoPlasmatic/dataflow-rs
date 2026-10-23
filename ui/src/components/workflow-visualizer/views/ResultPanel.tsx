@@ -18,6 +18,8 @@ interface ResultPanelProps {
   hasDebugTrace: boolean;
 }
 
+const NOOP_CHANGE = () => {};
+
 export function ResultPanel({
   displayValue,
   currentStepIndex,
@@ -25,6 +27,8 @@ export function ResultPanel({
   theme,
   hasDebugTrace,
 }: ResultPanelProps) {
+  const formattedJson = useMemo(() => JSON.stringify(displayValue, null, 2), [displayValue]);
+
   const highlightedPaths = useMemo(() => {
     if (!currentChanges || currentChanges.length === 0) return undefined;
     // `Change.path` is rooted at the context (`data.user.name`), and so is
@@ -52,8 +56,8 @@ export function ResultPanel({
 
       <div className="df-visualizer-result-content">
         <JsonEditor
-          value={JSON.stringify(displayValue, null, 2)}
-          onChange={() => {}}
+          value={formattedJson}
+          onChange={NOOP_CHANGE}
           readOnly={true}
           theme={theme}
           highlightedPaths={highlightedPaths}

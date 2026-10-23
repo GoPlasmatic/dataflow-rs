@@ -476,24 +476,8 @@ impl Writes {
         None
     }
 
-    /// That child, created when missing, last in insertion order.
-    fn child(&mut self, parent: u32, at: At<'_>, i: usize) -> u32 {
-        if let Some(c) = self.find(parent, at, i) {
-            return c;
-        }
-        let key = match at.index(i) {
-            Some(j) => Key::Index(j),
-            None => {
-                let seg = &at.segs()[i];
-                let start = self.names.len() as u32;
-                self.names.push_str(&seg.key);
-                Key::Name {
-                    start,
-                    len: self.names.len() as u32 - start,
-                    hash: seg.hash,
-                }
-            }
-        };
+    /// Appends a new child node with `key` at the end of `parent`'s child list.
+    fn push_child(&mut self, parent: u32, key: Key) -> u32 {
         let id = self.nodes.len() as u32;
         self.nodes.push(Node::new(key));
         let last = self.nodes[parent as usize].last;
@@ -504,6 +488,22 @@ impl Writes {
         }
         self.nodes[parent as usize].last = id;
         id
+    }
+
+    /// That child, created when missing, last in insertion order.
+    fn child(&mut self, parent: u32, at: At<'_>, i: usize) -> u32 {
+        match at.index(i) {
+            Some(j) => {
+                if let Some(c) = self.find(parent, at, i) {
+                    return c;
+                }
+                self.push_child(parent, Key::Index(j))
+            }
+            None => {
+                let seg = &at.segs()[i];
+                self.child_name(parent, &seg.key, seg.hash)
+            }
+        }
     }
 
     /// Whether a child node key matches the object key `name` with `hash`.
@@ -528,16 +528,7 @@ impl Writes {
             len: self.names.len() as u32 - start,
             hash,
         };
-        let id = self.nodes.len() as u32;
-        self.nodes.push(Node::new(key));
-        let last = self.nodes[parent as usize].last;
-        if last == NONE {
-            self.nodes[parent as usize].first = id;
-        } else {
-            self.nodes[last as usize].next = id;
-        }
-        self.nodes[parent as usize].last = id;
-        id
+        self.push_child(parent, key)
     }
 
     /// Detaches a node's children: a subsumed subtree is unlinked, not freed.
@@ -545,6 +536,19 @@ impl Writes {
         let node = &mut self.nodes[n as usize];
         node.first = NONE;
         node.last = NONE;
+    }
+
+    /// Combines `new` onto node `n` and detaches subsumed children.
+    fn finish_mark(&mut self, n: u32, new: Mark) {
+        let has_children = self.nodes[n as usize].first != NONE;
+        let node = &mut self.nodes[n as usize];
+        let mark = combine(node.mark.take(), new, has_children);
+        let keep = matches!(mark, Mark::Appended { .. }) && !has_children;
+        node.reorder = false;
+        node.mark = Some(mark);
+        if !keep {
+            self.unlink_children(n);
+        }
     }
 }
 
@@ -567,15 +571,7 @@ impl Writes {
             }
             n = self.child(n, at, i);
         }
-        let has_children = self.nodes[n as usize].first != NONE;
-        let node = &mut self.nodes[n as usize];
-        let mark = combine(node.mark.take(), new, has_children);
-        let keep = matches!(mark, Mark::Appended { .. }) && !has_children;
-        node.reorder = false;
-        node.mark = Some(mark);
-        if !keep {
-            self.unlink_children(n);
-        }
+        self.finish_mark(n, new);
     }
 
     /// Records a write at a root key (`root`), or at `root.field` when `field`
@@ -606,15 +602,7 @@ impl Writes {
             }
             n = self.child_name(n, field, field_hash);
         }
-        let has_children = self.nodes[n as usize].first != NONE;
-        let node = &mut self.nodes[n as usize];
-        let mark = combine(node.mark.take(), new, has_children);
-        let keep = matches!(mark, Mark::Appended { .. }) && !has_children;
-        node.reorder = false;
-        node.mark = Some(mark);
-        if !keep {
-            self.unlink_children(n);
-        }
+        self.finish_mark(n, new);
     }
 
     /// Flag the object at `at` for a reorder: a key of it was removed.

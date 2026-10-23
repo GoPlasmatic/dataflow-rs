@@ -306,6 +306,45 @@ impl<'p> RunEnv<'_, 'p> {
         record
     }
 
+    /// The record of `error` stamped with the current workflow's id, the task
+    /// at row `task`, and the run's timestamp.
+    pub(crate) fn task_error_record(&mut self, task: u32, error: &Error) -> ErrorRecord {
+        let mut record = ErrorRecord::from(error);
+        let ids = self.ids(task);
+        let now = self.now_text();
+        record.stamp(ids.workflow, Some(ids.task), now, None);
+        record
+    }
+
+    /// An [`ErrorSite`] in the current workflow and sweep, at `authored_path`.
+    pub(crate) fn site(&self, kind: SiteKind, authored_path: AuthoredPath) -> ErrorSite {
+        ErrorSite {
+            kind,
+            workflow_id: Arc::clone(self.workflow_id),
+            task_id: None,
+            group_id: None,
+            rule_index: None,
+            mapping_index: None,
+            target_path: None,
+            authored_path: Some(authored_path),
+            loop_counter: self.frame.loop_counter,
+        }
+    }
+
+    /// An [`ErrorSite`] for the task at row `task` in the current workflow
+    /// and sweep, at `authored_path`.
+    pub(crate) fn task_site(
+        &self,
+        kind: SiteKind,
+        task: u32,
+        authored_path: AuthoredPath,
+    ) -> ErrorSite {
+        ErrorSite {
+            task_id: Some(Arc::clone(self.ids(task).task)),
+            ..self.site(kind, authored_path)
+        }
+    }
+
     /// The current workflow's own step.
     pub(crate) fn workflow_step(&self, result: StepResult) -> TraceStep {
         TraceStep::new(self.workflow_ix, self.workflow_id, result)
@@ -556,15 +595,9 @@ fn attach_cond_site(
         CondKind::Task => (step_arc, None),
     };
     error.with_site(ErrorSite {
-        kind: site_kind,
-        workflow_id: Arc::clone(env.workflow_id),
         task_id,
         group_id,
-        rule_index: None,
-        mapping_index: None,
-        target_path: None,
-        authored_path: Some(cond_site.path.clone()),
-        loop_counter: env.frame.loop_counter,
+        ..env.site(site_kind, cond_site.path.clone())
     })
 }
 
@@ -589,13 +622,7 @@ fn skipped_calls(
             let task = wf.calls[site as usize].task;
             let mut step = env.task_step(task, StepResult::Skipped);
             if let Some(e) = error {
-                let mut record = ErrorRecord::from(e);
-                let ids = env.ids(task);
-                let workflow_id = Arc::clone(ids.workflow);
-                let task_id = Arc::clone(ids.task);
-                let now = env.now_text();
-                record.stamp(&workflow_id, Some(&task_id), now, None);
-                step.errors.push(record);
+                step.errors.push(env.task_error_record(task, e));
             }
             env.push_step(step);
         }
@@ -615,15 +642,11 @@ fn loop_init<'p>(
 ) -> Flow {
     if let Some(over) = &site.over {
         let over_site = ErrorSite {
-            kind: SiteKind::LoopOver,
-            workflow_id: Arc::clone(env.workflow_id),
-            task_id: None,
-            group_id: None,
-            rule_index: None,
-            mapping_index: None,
-            target_path: None,
-            authored_path: Some(AuthoredPath::root().join("loop").join("over")),
             loop_counter: None,
+            ..env.site(
+                SiteKind::LoopOver,
+                AuthoredPath::root().join("loop").join("over"),
+            )
         };
         match elements(
             rc,
@@ -723,15 +746,8 @@ fn enter<'p>(
                 sweep_step(env, counter, changes);
             }
             let e = e.with_site(ErrorSite {
-                kind: SiteKind::LoopOver,
-                workflow_id: Arc::clone(env.workflow_id),
-                task_id: None,
-                group_id: None,
-                rule_index: None,
-                mapping_index: None,
-                target_path: None,
-                authored_path: Some(AuthoredPath::root().join("loop")),
                 loop_counter: Some(counter),
+                ..env.site(SiteKind::LoopOver, AuthoredPath::root().join("loop"))
             });
             record::workflow_failure(env, &e);
             return Flow::Abort(e);
@@ -849,20 +865,7 @@ fn call<'p>(
     builtin: &'p Builtin,
 ) -> Flow {
     let errors_before = env.errors.len();
-    let workflow_id = env.workflow_id;
-    let task_id = &env.task_ids[site.task as usize];
     let meta = &wf.tasks[site.task as usize];
-    let task_site = |loop_counter: Option<i64>| ErrorSite {
-        kind: SiteKind::Task,
-        workflow_id: Arc::clone(workflow_id),
-        task_id: Some(Arc::clone(task_id)),
-        group_id: None,
-        rule_index: None,
-        mapping_index: None,
-        target_path: None,
-        authored_path: Some(meta.path.clone()),
-        loop_counter,
-    };
     let guard = match env.budget.charge_dispatch(DispatchKind::InlineBuiltin {
         workflow_id: &wf.id,
         task_id: &meta.id,
@@ -870,7 +873,7 @@ fn call<'p>(
     }) {
         Ok(guard) => guard,
         Err(e) => {
-            let e = e.with_site(task_site(env.frame.loop_counter));
+            let e = e.with_site(env.task_site(SiteKind::Task, site.task, meta.path.clone()));
             let decision = policy::forced_abort(env.ids(site.task).task, e);
             let done = Completed::new(env, site.task, None, None, errors_before, false);
             return record::record(rc, env, wf, done, decision);
@@ -894,8 +897,8 @@ fn call<'p>(
         budget: env.budget,
         condition_error_policy: env.condition_error_policy,
         payload: env.payload,
-        workflow_id,
-        task_id,
+        workflow_id: env.workflow_id,
+        task_id: &env.task_ids[site.task as usize],
         task_path: &meta.path,
         loop_counter: env.frame.loop_counter,
         capture: env.capture.captures(),
@@ -927,7 +930,7 @@ fn call<'p>(
     let decision = match result {
         Err(mut e) => {
             if e.site().is_none() {
-                e = e.with_site(task_site(env.frame.loop_counter));
+                e = e.with_site(env.task_site(SiteKind::Task, site.task, meta.path.clone()));
             }
             let force_stop = (env.condition_error_policy == ConditionErrorPolicy::Stop
                 && e.site()

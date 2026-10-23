@@ -118,6 +118,12 @@ pub trait ExprVisitor {
     /// result.
     fn expr(&mut self, _at: &AuthoredPath, _raw: &Value, _records: bool) {}
 
+    /// A compiled expression at `at`; forwards to [`Self::expr`] by default.
+    #[doc(hidden)]
+    fn compiled_expr(&mut self, at: &AuthoredPath, expr: &dyn ResolveExpr, records: bool) {
+        self.expr(at, expr.raw(), records);
+    }
+
     /// An interpolated document at `at`.
     fn interpolated(&mut self, _at: &AuthoredPath, _doc: &Interpolated) {}
 }
@@ -157,6 +163,11 @@ impl<'v> Visit<'v> {
     /// Reports an expression at the current path.
     pub fn expr(&mut self, raw: &Value) {
         self.visitor.expr(&self.path, raw, self.records);
+    }
+
+    /// Reports a compiled expression at the current path.
+    pub(crate) fn compiled_expr(&mut self, expr: &dyn ResolveExpr) {
+        self.visitor.compiled_expr(&self.path, expr, self.records);
     }
 
     /// Reports an interpolated document at the current path.
@@ -580,7 +591,7 @@ impl<T: FromValue> ConfigField for Expr<T> {
         }
     }
     fn visit(&self, v: &mut Visit<'_>) {
-        v.expr(self.raw());
+        v.compiled_expr(self);
     }
     fn resolve(&self, r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
         r.eval(self).map(Some)

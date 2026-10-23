@@ -188,17 +188,11 @@ pub(crate) async fn fan_out<'p>(
     let task_id = env.ids(site.task).task;
     let meta = &wf.tasks[site.task as usize];
     let policy = site.policy;
-    let over_site = ErrorSite {
-        kind: SiteKind::ForEachOver,
-        workflow_id: Arc::clone(env.workflow_id),
-        task_id: Some(Arc::clone(task_id)),
-        group_id: None,
-        rule_index: None,
-        mapping_index: None,
-        target_path: None,
-        authored_path: Some(meta.path.join("for_each").join("over")),
-        loop_counter: env.frame.loop_counter,
-    };
+    let over_site = env.task_site(
+        SiteKind::ForEachOver,
+        site.task,
+        meta.path.join("for_each").join("over"),
+    );
     let task_site = ErrorSite {
         kind: SiteKind::Task,
         authored_path: Some(meta.path.clone()),

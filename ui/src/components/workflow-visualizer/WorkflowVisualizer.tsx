@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef } from 'react';
-import type { Workflow, Task, TaskGroup, Step, JsonLogicValue, Message, MappingItem, ValidationRule } from '../../types';
-import { groupMembers, isTaskGroup, workflowTasks } from '../../types';
+import type { Workflow, Task, TaskGroup, Step, JsonLogicValue, Message, MappingItem, ValidationRule, Change } from '../../types';
+import { groupMembers, isTaskGroup, sortWorkflowsByPriority, workflowTasks } from '../../types';
 import type { DebugConfig } from '../../types/debugConfig';
 import { ThemeProvider, useTheme, useDebuggerOptional, DebuggerProvider } from './context';
 import { TreeView, DetailsPanel, ResultPanel } from './views';
@@ -13,10 +13,12 @@ import type { Theme } from './context';
 import './styles/index.css';
 import { describeMappingPath } from '../../utils/dataUtils';
 
+const EMPTY_CHANGES: Change[] = [];
+
 // Extended selection types for tree view
 export type TreeSelectionType =
   | { type: 'none' }
-  | { type: 'folder'; workflows: Workflow[]; name: string }
+  | { type: 'folder'; workflows: Workflow[]; name: string; path?: string }
   | { type: 'workflow'; workflow: Workflow }
   | { type: 'workflow-condition'; workflow: Workflow; condition: JsonLogicValue }
   | { type: 'task'; task: Task; workflow: Workflow }
@@ -68,7 +70,7 @@ export function resolveVisualizerSelection(
   if (!target) return { type: 'none' };
   if (target === 'first-workflow') {
     if (workflows.length === 0) return { type: 'none' };
-    const sorted = [...workflows].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+    const sorted = sortWorkflowsByPriority(workflows);
     return { type: 'workflow', workflow: sorted[0] };
   }
   const workflow = workflows.find((w) => w.id === target.workflowId);
@@ -99,14 +101,14 @@ export function resolveVisualizerSelection(
 function reconcileSelection(selection: TreeSelectionType, workflows: Workflow[]): TreeSelectionType {
   if (selection.type === 'none') return selection;
   if (selection.type === 'folder') {
-    if (selection.name === 'Workflows') {
+    if (selection.name === 'Workflows' && selection.path === undefined) {
       return workflows.length > 0 ? { type: 'folder', workflows, name: 'Workflows' } : { type: 'none' };
     }
     const matching = workflows.filter((w) =>
       selection.workflows.some((prev) => prev.id === w.id),
     );
     return matching.length > 0
-      ? { type: 'folder', workflows: matching, name: selection.name }
+      ? { type: 'folder', workflows: matching, name: selection.name, path: selection.path }
       : { type: 'none' };
   }
   const workflow = workflows.find((w) => w.id === selection.workflow.id);
@@ -341,7 +343,9 @@ function VisualizerInner({
   const displayValue = hasDebugTrace
     ? effectiveDebugContext?.currentContext
     : executionResult;
-  const currentChanges = hasDebugTrace ? effectiveDebugContext?.currentChanges : [];
+  const currentChanges = hasDebugTrace
+    ? (effectiveDebugContext?.currentChanges ?? EMPTY_CHANGES)
+    : EMPTY_CHANGES;
   const currentStepIndex = hasDebugTrace ? effectiveDebugContext?.state.currentStepIndex : -1;
 
   const isDraggingAny = isDragging || isVerticalDragging;
@@ -424,7 +428,7 @@ function VisualizerInner({
               <ResultPanel
                 displayValue={displayValue}
                 currentStepIndex={currentStepIndex ?? -1}
-                currentChanges={currentChanges ?? []}
+                currentChanges={currentChanges}
                 theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
                 hasDebugTrace={!!hasDebugTrace}
               />

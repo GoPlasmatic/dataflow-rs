@@ -235,7 +235,12 @@ fn redacting_clone(
             let pairs = pairs
                 .iter()
                 .map(|(key, child)| {
-                    let (child, child_size) = redacting_clone(child, &below_key(paths, key), sized);
+                    let sub = below_key(paths, key);
+                    let (child, child_size) = if sub.is_empty() {
+                        (child.clone(), measure(child))
+                    } else {
+                        redacting_clone(child, &sub, sized)
+                    };
                     if sized {
                         size += key.len() + child_size;
                     }
@@ -250,8 +255,12 @@ fn redacting_clone(
                 .iter()
                 .enumerate()
                 .map(|(index, child)| {
-                    let (child, child_size) =
-                        redacting_clone(child, &below_index(paths, index), sized);
+                    let sub = below_index(paths, index);
+                    let (child, child_size) = if sub.is_empty() {
+                        (child.clone(), measure(child))
+                    } else {
+                        redacting_clone(child, &sub, sized)
+                    };
                     size += child_size;
                     child
                 })
@@ -274,12 +283,18 @@ fn prune(value: &mut OwnedDataValue, paths: &[&[Seg]]) {
     match value {
         OwnedDataValue::Object(pairs) => {
             for (key, child) in pairs {
-                prune(child, &below_key(paths, key));
+                let sub = below_key(paths, key);
+                if !sub.is_empty() {
+                    prune(child, &sub);
+                }
             }
         }
         OwnedDataValue::Array(items) => {
             for (index, child) in items.iter_mut().enumerate() {
-                prune(child, &below_index(paths, index));
+                let sub = below_index(paths, index);
+                if !sub.is_empty() {
+                    prune(child, &sub);
+                }
             }
         }
         _ => {}

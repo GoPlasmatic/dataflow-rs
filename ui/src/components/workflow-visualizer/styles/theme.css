@@ -191,61 +191,10 @@
 
 /* ============================================================
    DARK — "lit logic board"
+   (Also supports deprecated pre-3.8 `.df-theme-dark:not([data-theme])`
+   class pairing so consumers targeting it keep working.)
    ============================================================ */
-.df-visualizer-container[data-theme="dark"] {
-  --board: #0a0f16;
-  --board-grid: rgba(120, 170, 255, 0.06);
-  --surface: #10161f;
-  --surface-2: #141b26;
-  --chip: #161d28;
-  --hairline: #263140;
-  --hairline-2: #1d2632;
-
-  --ink: #e6edf5;
-  --ink-2: #b3c1d1;
-  --muted: #8a9cb0;
-  --faint: #566172;
-
-  --accent: #7c86f5;
-  --accent-soft: #1b2140;
-  --accent-hover: #9aa2f8;
-  --on-signal: #0a0f16;
-
-  --sig-bool-true: #3fb950;
-  --sig-bool-false: #f85149;
-  --sig-bool-rest: #8098b0;
-  --sig-number: #58a6ff;
-  --sig-string: #e3b341;
-  --sig-collection: #bc8cff;
-  --sig-data: #39c5cf;
-  --sig-temporal: #db61a2;
-  --sig-null: #8b949e;
-
-  --sig-bool-true-bg: rgba(63, 185, 80, 0.13);
-  --sig-bool-false-bg: rgba(248, 81, 73, 0.13);
-  --sig-number-bg: rgba(88, 166, 255, 0.13);
-  --sig-string-bg: rgba(227, 179, 65, 0.14);
-  --sig-collection-bg: rgba(188, 140, 255, 0.13);
-  --sig-data-bg: rgba(57, 197, 207, 0.13);
-  --sig-temporal-bg: rgba(219, 97, 162, 0.14);
-  --sig-null-bg: rgba(139, 148, 158, 0.14);
-
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.6), 0 2px 10px rgba(0, 0, 0, 0.4);
-
-  --df-border-color-strong: color-mix(in srgb, var(--hairline) 65%, var(--ink));
-
-  color-scheme: dark;
-}
-
-/* ============================================================
-   DEPRECATED — the pre-3.8 class-pair theme switch.
-   `.df-theme-light` / `.df-theme-dark` are still emitted alongside the
-   `data-theme` attribute so consumers targeting them keep working. Only the
-   dark pairing needs a rule: light is the default declaration above.
-   Remove in the next major.
-   ============================================================ */
+.df-visualizer-container[data-theme="dark"],
 .df-visualizer-container.df-theme-dark:not([data-theme]) {
   --board: #0a0f16;
   --board-grid: rgba(120, 170, 255, 0.06);

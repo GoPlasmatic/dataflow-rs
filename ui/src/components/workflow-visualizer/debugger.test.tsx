@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { WorkflowVisualizer } from './WorkflowVisualizer';
 import { defaultEngineFactory } from '../../engines';
 import type { Workflow } from '../../types';
+
+afterEach(cleanup);
 
 /**
  * The first task writes a string, the second appends to it, which fails and
@@ -59,6 +61,61 @@ describe('the debugger', () => {
     expect(stateOf('Write')).toContain('df-tree-node-executed');
     expect(stateOf('Append')).toContain('df-tree-node-error');
     expect(stateOf('Never')).toContain('df-tree-node-pending');
+  });
+
+  it('marks only the failing mapping as an error when a map task has multiple mappings', async () => {
+    const multiMap: Workflow[] = [
+      {
+        id: 'w',
+        name: 'MultiMap',
+        tasks: [
+          {
+            id: 't1',
+            name: 'MixedMappings',
+            function: {
+              name: 'map',
+              input: {
+                mappings: [
+                  { path: 'data.s', logic: 'str' },
+                  { path: 'data.s', logic: 'bad_append', mode: 'append' },
+                  { path: 'data.ok', logic: true },
+                ],
+              },
+            },
+          },
+        ],
+      },
+    ];
+
+    const { container } = render(
+      <WorkflowVisualizer
+        workflows={multiMap}
+        debugConfig={{
+          enabled: true,
+          engineFactory: defaultEngineFactory,
+          initialPayload: {},
+          autoExecute: true,
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.df-debug-toolbar-run-status')).not.toBeNull();
+    });
+
+    fireEvent.click(screen.getByTitle('Last step (End)'));
+    await waitFor(() => {
+      expect(container.querySelector('.df-tree-node-error')).not.toBeNull();
+    });
+
+    const mappingNodes = Array.from(container.querySelectorAll('.df-tree-node')).filter((n) => {
+      const text = n.querySelector(':scope > .df-tree-node-content .df-tree-label')?.textContent;
+      return text === 'data.s' || text === 'data.ok';
+    });
+    expect(mappingNodes).toHaveLength(3);
+    expect(mappingNodes[0].className).toContain('df-tree-node-executed');
+    expect(mappingNodes[1].className).toContain('df-tree-node-error');
+    expect(mappingNodes[2].className).toContain('df-tree-node-executed');
   });
 
   it('reports a refused definition through the toolbar with its issues', async () => {

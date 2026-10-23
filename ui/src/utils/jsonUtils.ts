@@ -41,6 +41,11 @@ export function findPathLineNumbers(jsonString: string, paths: string[]): number
         keyStack.push(String(i));
         // Find the next line with content for this array element
         advancePastContent();
+        const path = currentPath();
+        if (targetPaths.has(path) && lineIndex < lines.length) {
+          lineNumbers.push(lineIndex + 1);
+        }
+        lineIndex++;
         walkValue(value[i]);
         keyStack.pop();
       }

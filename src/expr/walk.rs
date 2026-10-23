@@ -56,7 +56,11 @@ pub fn secret_refs(raw: &Value) -> impl Iterator<Item = (Option<&str>, AuthoredP
     // caller stops asking, so a caller that only needs the first reference
     // does not walk the whole expression. Children are pushed in reverse, so
     // they pop in v3's order.
-    let mut stack = vec![(raw, AuthoredPath::root())];
+    let mut stack = if reads_secret(raw) {
+        vec![(raw, AuthoredPath::root())]
+    } else {
+        Vec::new()
+    };
     std::iter::from_fn(move || {
         while let Some((value, at)) = stack.pop() {
             match value {

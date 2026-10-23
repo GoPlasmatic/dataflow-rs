@@ -8,7 +8,10 @@ interface KeyboardShortcutHandlers {
 export function useKeyboardShortcuts({ onTogglePanel, onFormatJson }: KeyboardShortcutHandlers) {
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
-      const isMac = navigator.platform.toUpperCase().includes('MAC');
+      const platform =
+        (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ||
+        navigator.userAgent;
+      const isMac = /mac|iphone|ipad|ipod/i.test(platform);
       const modKey = isMac ? event.metaKey : event.ctrlKey;
       const key = event.key.toLowerCase();
 

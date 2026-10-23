@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { Folder } from 'lucide-react';
 import type { TreeSelectionType } from '../WorkflowVisualizer';
 import { collectFolderWorkflows, type FolderTreeNode } from '../utils/folderTree';
@@ -30,8 +31,9 @@ export function FolderNode({
   const hasChildren = folder.folders.size > 0 || folder.workflows.length > 0;
 
   // Sort child folders alphabetically
-  const sortedFolders = Array.from(folder.folders.values()).sort((a, b) =>
-    a.name.localeCompare(b.name)
+  const sortedFolders = useMemo(
+    () => Array.from(folder.folders.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    [folder.folders],
   );
 
   // Workflows are already sorted by priority from buildFolderTree
@@ -42,12 +44,22 @@ export function FolderNode({
       icon={<Folder size={14} />}
       iconColor={TREE_COLORS.folder}
       isExpanded={isExpanded}
-      isSelected={selection.type === 'folder' && selection.name === folder.name}
+      isSelected={
+        selection.type === 'folder' &&
+        (selection.path !== undefined
+          ? selection.path === folder.fullPath
+          : selection.name === folder.name)
+      }
       hasChildren={hasChildren}
       level={level}
       onToggle={() => toggleNode(folderId)}
       onClick={() => {
-        onSelect({ type: 'folder', workflows: collectFolderWorkflows(folder), name: folder.name });
+        onSelect({
+          type: 'folder',
+          workflows: collectFolderWorkflows(folder),
+          name: folder.name,
+          path: folder.fullPath,
+        });
         if (!isExpanded) toggleNode(folderId);
       }}
     >

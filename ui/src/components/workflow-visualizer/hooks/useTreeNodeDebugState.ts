@@ -3,6 +3,7 @@ import type { Workflow, Task, DebugNodeState, Context, Trace, TraceStep } from '
 import {
   getWorkflowState,
   getTaskState,
+  hasCondition,
   isTaskCurrent,
   isWorkflowStep,
   findTaskStepIndex,
@@ -31,13 +32,69 @@ export interface TreeNodeDebugState {
 /**
  * Null state when debugger is not active
  */
-const nullState: TreeNodeDebugState = {
+const nullState: TreeNodeDebugState = Object.freeze({
   state: null,
   isCurrent: false,
   isExecuted: false,
   isSkipped: false,
   hasError: false,
-};
+});
+
+const PENDING_STATE: TreeNodeDebugState = Object.freeze({
+  state: 'pending',
+  isCurrent: false,
+  isExecuted: false,
+  isSkipped: false,
+  hasError: false,
+});
+
+const EXECUTED_STATE: TreeNodeDebugState = Object.freeze({
+  state: 'executed',
+  isCurrent: false,
+  isExecuted: true,
+  isSkipped: false,
+  hasError: false,
+});
+
+const SKIPPED_STATE: TreeNodeDebugState = Object.freeze({
+  state: 'skipped',
+  isCurrent: false,
+  isExecuted: false,
+  isSkipped: true,
+  hasError: false,
+});
+
+const ERROR_STATE: TreeNodeDebugState = Object.freeze({
+  state: 'error',
+  isCurrent: false,
+  isExecuted: false,
+  isSkipped: false,
+  hasError: true,
+});
+
+const EXECUTED_COND_TRUE_STATE: TreeNodeDebugState = Object.freeze({
+  state: 'executed',
+  isCurrent: false,
+  isExecuted: true,
+  isSkipped: false,
+  hasError: false,
+  conditionResult: true,
+});
+
+function nonCurrentStateFor(state: DebugNodeState | null): TreeNodeDebugState {
+  switch (state) {
+    case 'executed':
+      return EXECUTED_STATE;
+    case 'skipped':
+      return SKIPPED_STATE;
+    case 'error':
+      return ERROR_STATE;
+    case 'pending':
+      return PENDING_STATE;
+    default:
+      return nullState;
+  }
+}
 
 /**
  * Hook to get debug state for a workflow node
@@ -45,31 +102,19 @@ const nullState: TreeNodeDebugState = {
  */
 export function useWorkflowDebugState(workflow: Workflow): TreeNodeDebugState {
   const dbgContext = useDebuggerOptional();
+  const isActive = dbgContext?.state.isActive ?? false;
+  const hasTrace = dbgContext?.hasTrace ?? false;
+  const trace = dbgContext?.state.trace ?? null;
+  const currentStepIndex = dbgContext?.state.currentStepIndex ?? -1;
 
   return useMemo(() => {
-    if (!dbgContext || !dbgContext.state.isActive || !dbgContext.hasTrace || !dbgContext.state.trace) {
+    if (!isActive || !hasTrace || !trace || currentStepIndex < 0) {
       return nullState;
     }
 
-    // Don't show any state when at step -1 (ready state)
-    if (dbgContext.state.currentStepIndex < 0) {
-      return nullState;
-    }
-
-    const state = getWorkflowState(
-      dbgContext.state.trace,
-      dbgContext.state.currentStepIndex,
-      workflow.id
-    );
-
-    return {
-      state,
-      isCurrent: false, // Workflows never show as current
-      isExecuted: state === 'executed',
-      isSkipped: state === 'skipped',
-      hasError: state === 'error',
-    };
-  }, [dbgContext, workflow.id]);
+    const state = getWorkflowState(trace, currentStepIndex, workflow.id);
+    return nonCurrentStateFor(state);
+  }, [isActive, hasTrace, trace, currentStepIndex, workflow.id]);
 }
 
 /**
@@ -90,18 +135,17 @@ export function useWorkflowDebugState(workflow: Workflow): TreeNodeDebugState {
  */
 export function useWorkflowConditionDebugState(workflow: Workflow): TreeNodeDebugState {
   const dbgContext = useDebuggerOptional();
+  const isActive = dbgContext?.state.isActive ?? false;
+  const hasTrace = dbgContext?.hasTrace ?? false;
+  const trace = dbgContext?.state.trace ?? null;
+  const run = dbgContext?.state.run ?? null;
+  const currentStepIndex = dbgContext?.state.currentStepIndex ?? -1;
+  const isConditional = hasCondition(workflow.condition);
 
   return useMemo(() => {
-    if (!dbgContext || !dbgContext.state.isActive || !dbgContext.hasTrace || !dbgContext.state.trace) {
+    if (!isConditional || !isActive || !hasTrace || !trace || currentStepIndex < 0) {
       return nullState;
     }
-
-    // Don't show any state when at step -1 (ready state)
-    if (dbgContext.state.currentStepIndex < 0) {
-      return nullState;
-    }
-
-    const { trace, run, currentStepIndex } = dbgContext.state;
 
     let lastSkip = -1;
     let lastTask = -1;
@@ -129,13 +173,7 @@ export function useWorkflowConditionDebugState(workflow: Workflow): TreeNodeDebu
       // workflow's rather than this node's.
       const record = run?.workflows.find((w) => w.id === workflow.id);
       if (record?.selection === 'skipped_by_rollout') {
-        return {
-          state: 'skipped',
-          isCurrent: false,
-          isExecuted: false,
-          isSkipped: true,
-          hasError: false,
-        };
+        return SKIPPED_STATE;
       }
 
       const isCurrent = lastSkip === currentStepIndex;
@@ -150,15 +188,8 @@ export function useWorkflowConditionDebugState(workflow: Workflow): TreeNodeDebu
       };
     }
 
-    return {
-      state: 'executed',
-      isCurrent: false,
-      isExecuted: true,
-      isSkipped: false,
-      hasError: false,
-      conditionResult: true,
-    };
-  }, [dbgContext, workflow.id]);
+    return EXECUTED_COND_TRUE_STATE;
+  }, [isConditional, isActive, hasTrace, trace, run, currentStepIndex, workflow.id]);
 }
 
 /**
@@ -166,39 +197,30 @@ export function useWorkflowConditionDebugState(workflow: Workflow): TreeNodeDebu
  */
 export function useTaskDebugState(task: Task, workflow: Workflow): TreeNodeDebugState {
   const dbgContext = useDebuggerOptional();
+  const isActive = dbgContext?.state.isActive ?? false;
+  const hasTrace = dbgContext?.hasTrace ?? false;
+  const trace = dbgContext?.state.trace ?? null;
+  const currentStepIndex = dbgContext?.state.currentStepIndex ?? -1;
 
   return useMemo(() => {
-    if (!dbgContext || !dbgContext.state.isActive || !dbgContext.hasTrace || !dbgContext.state.trace) {
+    if (!isActive || !hasTrace || !trace || currentStepIndex < 0) {
       return nullState;
     }
 
-    // Don't show any state when at step -1 (ready state)
-    if (dbgContext.state.currentStepIndex < 0) {
-      return nullState;
+    const state = getTaskState(trace, currentStepIndex, workflow.id, task.id);
+    const isCurrent = isTaskCurrent(trace, currentStepIndex, workflow.id, task.id);
+    if (!isCurrent) {
+      return nonCurrentStateFor(state);
     }
-
-    const state = getTaskState(
-      dbgContext.state.trace,
-      dbgContext.state.currentStepIndex,
-      workflow.id,
-      task.id
-    );
-
-    const isCurrent = isTaskCurrent(
-      dbgContext.state.trace,
-      dbgContext.state.currentStepIndex,
-      workflow.id,
-      task.id
-    );
 
     return {
       state,
-      isCurrent,
+      isCurrent: true,
       isExecuted: state === 'executed',
       isSkipped: state === 'skipped',
       hasError: state === 'error',
     };
-  }, [dbgContext, task.id, workflow.id]);
+  }, [isActive, hasTrace, trace, currentStepIndex, task.id, workflow.id]);
 }
 
 /**
@@ -211,65 +233,112 @@ export function useTaskDebugState(task: Task, workflow: Workflow): TreeNodeDebug
  */
 export function useTaskConditionDebugState(task: Task, workflow: Workflow): TreeNodeDebugState {
   const dbgContext = useDebuggerOptional();
+  const isActive = dbgContext?.state.isActive ?? false;
+  const hasTrace = dbgContext?.hasTrace ?? false;
+  const trace = dbgContext?.state.trace ?? null;
+  const currentStepIndex = dbgContext?.state.currentStepIndex ?? -1;
+  const isConditional = hasCondition(task.condition);
 
   return useMemo(() => {
-    if (!dbgContext || !dbgContext.state.isActive || !dbgContext.hasTrace || !dbgContext.state.trace) {
+    if (!isConditional || !isActive || !hasTrace || !trace || currentStepIndex < 0) {
       return nullState;
     }
-
-    // Don't show any state when at step -1 (ready state)
-    if (dbgContext.state.currentStepIndex < 0) {
-      return nullState;
-    }
-
-    const { trace, currentStepIndex } = dbgContext.state;
 
     // The current sweep's step, for a looping workflow — taking the first
     // match would pin this node to sweep 0 while the task node it sits under
     // advances, showing two iterations side by side.
     const stepIndex = findTaskStepIndex(trace, currentStepIndex, workflow.id, task.id);
 
-    if (stepIndex === -1) {
+    if (stepIndex === -1 || stepIndex > currentStepIndex) {
       return nullState;
     }
 
     const taskStep = trace.steps[stepIndex];
     const isCurrent = stepIndex === currentStepIndex;
 
-    // If step is after current position, it's pending
-    if (stepIndex > currentStepIndex) {
-      return nullState;
-    }
-
     if (taskStep.result === 'skipped') {
-      // Task was skipped due to condition
+      const hasError = stepErrors(taskStep).length > 0;
       return {
-        state: 'skipped',
+        state: hasError ? 'error' : 'skipped',
         isCurrent,
         isExecuted: false,
-        isSkipped: true,
-        hasError: false,
+        isSkipped: !hasError,
+        hasError,
         conditionResult: false,
       };
+    }
+
+    if (!isCurrent) {
+      return EXECUTED_COND_TRUE_STATE;
     }
 
     // Executed or failed: the condition admitted the task.
     return {
       state: 'executed',
-      isCurrent,
+      isCurrent: true,
       isExecuted: true,
       isSkipped: false,
       hasError: false,
       conditionResult: true,
     };
-  }, [dbgContext, task.id, workflow.id]);
+  }, [isConditional, isActive, hasTrace, trace, currentStepIndex, task.id, workflow.id]);
 }
 
 /**
  * Hook to get debug state for a mapping node within a task
  */
-export function useMappingDebugState(task: Task, workflow: Workflow, _mappingIndex: number): TreeNodeDebugState {
-  return useTaskDebugState(task, workflow);
+export function useMappingDebugState(task: Task, workflow: Workflow, mappingIndex: number): TreeNodeDebugState {
+  const dbgContext = useDebuggerOptional();
+  const isActive = dbgContext?.state.isActive ?? false;
+  const hasTrace = dbgContext?.hasTrace ?? false;
+  const trace = dbgContext?.state.trace ?? null;
+  const currentStepIndex = dbgContext?.state.currentStepIndex ?? -1;
+
+  return useMemo(() => {
+    if (!isActive || !hasTrace || !trace || currentStepIndex < 0) {
+      return nullState;
+    }
+
+    const taskStepIndex = findTaskStepIndex(trace, currentStepIndex, workflow.id, task.id);
+
+    if (taskStepIndex === -1 || taskStepIndex > currentStepIndex) {
+      return PENDING_STATE;
+    }
+
+    const taskStep = trace.steps[taskStepIndex];
+
+    if (taskStep.result === 'skipped') {
+      return SKIPPED_STATE;
+    }
+
+    const isCurrent = taskStepIndex === currentStepIndex;
+    const errors = stepErrors(taskStep);
+    const mappingErrors = errors.filter((e) => e.code === 'MAPPING_ERROR');
+    let hasError = false;
+
+    if (mappingErrors.length > 0) {
+      // `map` formats each failed mapping's error message as `mappings[i] (<path>): <reason>`.
+      const prefix = `mappings[${mappingIndex}] (`;
+      const hasIndexedErrors = mappingErrors.some((e) => e.message.startsWith('mappings['));
+      hasError = hasIndexedErrors
+        ? mappingErrors.some((e) => e.message.startsWith(prefix))
+        : true;
+    } else if (errors.length > 0) {
+      hasError = true;
+    }
+
+    if (!isCurrent) {
+      return hasError ? ERROR_STATE : EXECUTED_STATE;
+    }
+
+    return {
+      state: hasError ? ('error' as DebugNodeState) : ('executed' as DebugNodeState),
+      isCurrent: true,
+      isExecuted: !hasError,
+      isSkipped: false,
+      hasError,
+    };
+  }, [isActive, hasTrace, trace, currentStepIndex, task.id, workflow.id, mappingIndex]);
 }
 
 /**
@@ -277,36 +346,28 @@ export function useMappingDebugState(task: Task, workflow: Workflow, _mappingInd
  */
 export function useValidationRuleDebugState(task: Task, workflow: Workflow, ruleIndex: number): TreeNodeDebugState {
   const dbgContext = useDebuggerOptional();
+  const isActive = dbgContext?.state.isActive ?? false;
+  const hasTrace = dbgContext?.hasTrace ?? false;
+  const trace = dbgContext?.state.trace ?? null;
+  const currentStepIndex = dbgContext?.state.currentStepIndex ?? -1;
 
   return useMemo(() => {
-    if (!dbgContext || !dbgContext.state.isActive || !dbgContext.hasTrace || !dbgContext.state.trace) {
+    if (!isActive || !hasTrace || !trace || currentStepIndex < 0) {
       return nullState;
     }
-
-    if (dbgContext.state.currentStepIndex < 0) {
-      return nullState;
-    }
-
-    const { trace, currentStepIndex } = dbgContext.state;
 
     // The current sweep's step, for the same reason as the task-condition
     // node above.
     const taskStepIndex = findTaskStepIndex(trace, currentStepIndex, workflow.id, task.id);
 
     if (taskStepIndex === -1 || taskStepIndex > currentStepIndex) {
-      return { ...nullState, state: 'pending' as DebugNodeState };
+      return PENDING_STATE;
     }
 
     const taskStep = trace.steps[taskStepIndex];
 
     if (taskStep.result === 'skipped') {
-      return {
-        state: 'skipped' as DebugNodeState,
-        isCurrent: false,
-        isExecuted: false,
-        isSkipped: true,
-        hasError: false,
-      };
+      return SKIPPED_STATE;
     }
 
     // A validation puts one record per failed rule on its own step, with the
@@ -326,14 +387,18 @@ export function useValidationRuleDebugState(task: Task, workflow: Workflow, rule
       }
     }
 
+    if (!isCurrent) {
+      return hasError ? ERROR_STATE : EXECUTED_STATE;
+    }
+
     return {
       state: hasError ? 'error' as DebugNodeState : 'executed' as DebugNodeState,
-      isCurrent,
+      isCurrent: true,
       isExecuted: !hasError,
       isSkipped: false,
       hasError,
     };
-  }, [dbgContext, task.id, task.function, workflow.id, ruleIndex]);
+  }, [isActive, hasTrace, trace, currentStepIndex, task.id, task.function, workflow.id, ruleIndex]);
 }
 
 /**
@@ -359,22 +424,28 @@ export interface TaskDebugStep {
  */
 export function useTaskDebugStep(task: Task, workflow: Workflow): TaskDebugStep | null {
   const dbgContext = useDebuggerOptional();
+  const isActive = dbgContext?.state.isActive ?? false;
+  const trace = dbgContext?.state.trace ?? null;
+  const currentStepIndex = dbgContext?.state.currentStepIndex ?? -1;
+  const contextAt = dbgContext?.contextAt;
+  const mappingContextAt = dbgContext?.mappingContextAt;
 
   return useMemo(() => {
-    if (!dbgContext || !dbgContext.state.isActive || !dbgContext.state.trace) {
+    if (!isActive || !trace || !contextAt || !mappingContextAt) {
       return null;
     }
-    const { trace, currentStepIndex } = dbgContext.state;
     const stepIndex = findTaskStepIndex(trace, currentStepIndex, workflow.id, task.id);
     if (stepIndex === -1 || stepIndex > currentStepIndex) {
       return null;
     }
     return {
-      trace, stepIndex, step: trace.steps[stepIndex],
-      contextBefore: dbgContext.contextAt(stepIndex - 1)!,
-      mappingContextAt: dbgContext.mappingContextAt,
+      trace,
+      stepIndex,
+      step: trace.steps[stepIndex],
+      contextBefore: contextAt(stepIndex - 1)!,
+      mappingContextAt,
     };
-  }, [dbgContext, task.id, workflow.id]);
+  }, [isActive, trace, currentStepIndex, contextAt, mappingContextAt, task.id, workflow.id]);
 }
 
 /**

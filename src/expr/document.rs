@@ -287,11 +287,20 @@ fn walk(raw: &Value, cx: &mut CompileCx<'_>, mut holes: Option<&mut Vec<Hole>>) 
                     _ => {}
                 }
             }
-            let children: Vec<Option<Node>> = o
-                .iter()
-                .map(|(k, v)| cx.at(k.as_str(), |cx| walk(v, cx, holes.as_deref_mut())))
-                .collect();
-            children.iter().any(Option::is_some).then(|| {
+            let mut children: Option<Vec<Option<Node>>> = None;
+            for (i, (k, v)) in o.iter().enumerate() {
+                if let Some(node) = cx.at(k.as_str(), |cx| walk(v, cx, holes.as_deref_mut())) {
+                    let list = children.get_or_insert_with(|| {
+                        let mut list = Vec::with_capacity(o.len());
+                        list.resize_with(i, || None);
+                        list
+                    });
+                    list.push(Some(node));
+                } else if let Some(list) = &mut children {
+                    list.push(None);
+                }
+            }
+            children.map(|children| {
                 Node::Object(
                     o.iter()
                         .zip(children)
@@ -303,12 +312,20 @@ fn walk(raw: &Value, cx: &mut CompileCx<'_>, mut holes: Option<&mut Vec<Hole>>) 
             })
         }
         Value::Array(a) => {
-            let children: Vec<Option<Node>> = a
-                .iter()
-                .enumerate()
-                .map(|(i, v)| cx.at(i, |cx| walk(v, cx, holes.as_deref_mut())))
-                .collect();
-            children.iter().any(Option::is_some).then(|| {
+            let mut children: Option<Vec<Option<Node>>> = None;
+            for (i, v) in a.iter().enumerate() {
+                if let Some(node) = cx.at(i, |cx| walk(v, cx, holes.as_deref_mut())) {
+                    let list = children.get_or_insert_with(|| {
+                        let mut list = Vec::with_capacity(a.len());
+                        list.resize_with(i, || None);
+                        list
+                    });
+                    list.push(Some(node));
+                } else if let Some(list) = &mut children {
+                    list.push(None);
+                }
+            }
+            children.map(|children| {
                 Node::Array(
                     a.iter()
                         .zip(children)

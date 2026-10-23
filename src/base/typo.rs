@@ -33,13 +33,16 @@ pub(crate) fn near_miss<'k>(key: &str, known: &[&'k str]) -> Option<&'k str> {
     let len = key.chars().count();
     let threshold = if len <= 5 { 1 } else { 2 };
     let mut chars: Option<Vec<char>> = None;
+    let mut cand_chars: Vec<char> = Vec::new();
     let mut best: Option<(usize, &'k str)> = None;
     for &candidate in known {
         if len.abs_diff(candidate.chars().count()) > threshold {
             continue;
         }
         let key = chars.get_or_insert_with(|| key.chars().collect());
-        let distance = osa(key, &candidate.chars().collect::<Vec<_>>());
+        cand_chars.clear();
+        cand_chars.extend(candidate.chars());
+        let distance = osa(key, &cand_chars);
         if distance == 0 || distance > threshold {
             continue;
         }

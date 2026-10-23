@@ -1,5 +1,6 @@
 export { useExpandedState } from './useExpandedState';
 export { useResizable } from './useResizable';
+export { useDebuggerKeyboardShortcuts } from './useDebuggerKeyboardShortcuts';
 export {
   useTreeNodeDebugState,
   useWorkflowDebugState,

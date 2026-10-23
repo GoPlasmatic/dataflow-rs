@@ -34,7 +34,7 @@ use super::engine::{metadata, slots};
 use super::interp::RunEnv;
 use super::message::{AuditEntry, keeps_entries, record_audit};
 use super::policy::{Decision, Flow, RecordMeta};
-use crate::base::{Change, Error, ErrorRecord, Instant};
+use crate::base::{Change, Error, Instant};
 use crate::expr::Path;
 use crate::function::task_record;
 use crate::observe::{Event, StepResult};
@@ -322,16 +322,28 @@ fn watched<'p>(
         let progress = record_core(rc, env, ids, stamp, status, record, meta, |env| {
             if env.capture.audit() {
                 // When the trace wants them too, the audit gets a copy.
-                let mut changes = if traced {
-                    env.changes.clone()
+                if traced {
+                    if marked {
+                        env.changes
+                            .iter()
+                            .filter(|c| !c.trace_only)
+                            .map(|c| {
+                                let mut c = c.clone();
+                                c.replaced = false;
+                                c
+                            })
+                            .collect()
+                    } else {
+                        env.changes.clone()
+                    }
                 } else {
-                    std::mem::take(&mut env.changes)
-                };
-                // The audit's copy keeps v3's bytes.
-                if marked {
-                    changes.retain_mut(audited);
+                    let mut changes = std::mem::take(&mut env.changes);
+                    // The audit's copy keeps v3's bytes.
+                    if marked {
+                        changes.retain_mut(audited);
+                    }
+                    changes
                 }
-                changes
             } else {
                 Vec::new()
             }
@@ -425,12 +437,7 @@ pub(crate) fn workflow_failure(env: &mut RunEnv<'_, '_>, error: &Error) {
 /// traced run pushes a `Failed` task step carrying that record, without
 /// fabricating a task execution audit entry or progress write.
 pub(crate) fn task_condition_failure(env: &mut RunEnv<'_, '_>, task: u32, error: &Error) {
-    let mut record = ErrorRecord::from(error);
-    let ids = env.ids(task);
-    let workflow_id = Arc::clone(ids.workflow);
-    let task_id = Arc::clone(ids.task);
-    let now = env.now_text();
-    record.stamp(&workflow_id, Some(&task_id), now, None);
+    let record = env.task_error_record(task, error);
     if env.watch.trace.is_some() {
         let mut step = env.task_step(task, StepResult::Failed);
         #[cfg(test)]

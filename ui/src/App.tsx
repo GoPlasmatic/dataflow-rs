@@ -201,6 +201,15 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory }) {
 
   const payloadKeyCount = useMemo(() => Object.keys(debugPayload).length, [debugPayload]);
 
+  const debugConfig = useMemo(
+    () => ({
+      enabled: true,
+      engineFactory,
+      autoExecute: true,
+    }),
+    [engineFactory]
+  );
+
   return (
     <div className="app" data-theme={resolvedTheme}>
       <header className="app-header">
@@ -383,11 +392,7 @@ function AppContent({ engineFactory }: { engineFactory: EngineFactory }) {
               workflows={workflows}
               initialSelection="first-workflow"
               theme={resolvedTheme}
-              debugConfig={{
-                enabled: true,
-                engineFactory,
-                autoExecute: true,
-              }}
+              debugConfig={debugConfig}
               debugPayload={debugPayload}
             />
           </div>

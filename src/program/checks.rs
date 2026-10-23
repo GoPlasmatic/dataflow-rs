@@ -27,12 +27,13 @@
 
 use super::fingerprint::Fingerprint;
 use crate::base::{AuthoredPath, Issue, IssueCode, PathSeg, StepKind};
-use crate::def::{Logic, RejectionPolicy, StepDef, TaskDef, WorkflowDef};
-use crate::expr::{ExprEngine, ExprVisitor, escaped_keys, secret_refs};
+use crate::def::{RejectionPolicy, StepDef, TaskDef, WorkflowDef};
+use crate::expr::{CRATE, ExprEngine, ExprVisitor, ResolveExpr, escaped_keys, secret_refs};
 use crate::function::builtins::BuiltinKind;
+use datavalue::OwnedDataValue;
 use serde_json::Value;
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// The step an expression sits in: its kind and id. `None` for the
 /// workflow's own expressions.
@@ -70,7 +71,13 @@ impl Site<'_> {
 /// `issues`, in the order they are found.
 pub(crate) trait Hook {
     /// One expression, at `site`, compiled from `raw`.
-    fn expr(&mut self, site: Site<'_>, raw: &Value, issues: &mut Vec<Issue>);
+    fn expr(
+        &mut self,
+        site: Site<'_>,
+        raw: &Value,
+        compiled: Option<&dyn ResolveExpr>,
+        issues: &mut Vec<Issue>,
+    );
 
     /// The whole workflow, after its steps. Not called for a fragment.
     fn workflow(&mut self, _def: &WorkflowDef, _issues: &mut Vec<Issue>) {}
@@ -89,6 +96,8 @@ pub(crate) struct Checks<'e> {
     ops: BTreeSet<String>,
     /// The data keys the expressions use.
     data: BTreeSet<String>,
+    /// Step condition paths that compiled and constant-folded to `true`.
+    trivial_conds: HashSet<AuthoredPath>,
 }
 
 impl<'e> Checks<'e> {
@@ -98,6 +107,7 @@ impl<'e> Checks<'e> {
             exprs,
             ops: BTreeSet::new(),
             data: BTreeSet::new(),
+            trivial_conds: HashSet::new(),
         }
     }
 
@@ -121,7 +131,16 @@ impl<'e> Checks<'e> {
 
     /// Rule 1: a recorded expression reading any secret, or a literal name
     /// the engine does not declare. Both point at the field.
-    fn secrets(&self, site: Site<'_>, raw: &Value, report: &mut Report<'_>) {
+    fn secrets(
+        &self,
+        site: Site<'_>,
+        raw: &Value,
+        compiled: Option<&dyn ResolveExpr>,
+        report: &mut Report<'_>,
+    ) {
+        if compiled.is_some_and(|expr| !expr.reads_secret(CRATE)) {
+            return;
+        }
         let mut refs = secret_refs(raw).peekable();
         if refs.peek().is_none() {
             return;
@@ -170,15 +189,26 @@ impl<'e> Checks<'e> {
 
     /// Rule 3: every path rooted at `payload` the expression reads at the
     /// root, at the expression, from the compiled rule's own `facts()`.
-    fn payload_vars(&self, at: &AuthoredPath, raw: &Value, report: &mut Report<'_>) {
+    fn payload_vars(
+        &self,
+        at: &AuthoredPath,
+        raw: &Value,
+        compiled: Option<&dyn ResolveExpr>,
+        report: &mut Report<'_>,
+    ) {
         if !matches!(raw, Value::Object(_) | Value::Array(_)) {
             return;
         }
-        // The compile walk compiled `raw` too; this asks the same engine for
-        // the one answer it needs, the rule's reads. A rule the engine cannot
-        // compile is reported elsewhere and has no reads to check.
-        let Ok(logic) = self.exprs.logic().compile(raw) else {
-            return;
+        let owned;
+        let logic = match compiled {
+            Some(expr) => expr.logic(CRATE),
+            None => {
+                let Ok(compiled) = self.exprs.logic().compile(raw) else {
+                    return;
+                };
+                owned = compiled;
+                &owned
+            }
         };
         for read in logic.facts().reads() {
             if read.segments().first().map(String::as_str) != Some("payload") {
@@ -199,13 +229,26 @@ impl<'e> Checks<'e> {
 type Report<'r> = dyn FnMut(IssueCode, AuthoredPath, String) + 'r;
 
 impl Hook for Checks<'_> {
-    fn expr(&mut self, site: Site<'_>, raw: &Value, issues: &mut Vec<Issue>) {
+    fn expr(
+        &mut self,
+        site: Site<'_>,
+        raw: &Value,
+        compiled: Option<&dyn ResolveExpr>,
+        issues: &mut Vec<Issue>,
+    ) {
+        if !site.records
+            && site.field.is_none()
+            && site.step.is_some()
+            && compiled.is_some_and(|e| e.constant_value(CRATE) == Some(OwnedDataValue::Bool(true)))
+        {
+            self.trivial_conds.insert(site.at.clone());
+        }
         let mut report = |code, at, message: String| {
             issues.push(site.stamp(Issue::new(code, at, message)));
         };
-        self.secrets(site, raw, &mut report);
+        self.secrets(site, raw, compiled, &mut report);
         self.template_keys(site.at, raw, &mut report);
-        self.payload_vars(site.at, raw, &mut report);
+        self.payload_vars(site.at, raw, compiled, &mut report);
         self.classify(raw);
     }
 
@@ -214,7 +257,7 @@ impl Hook for Checks<'_> {
     }
 
     fn workflow(&mut self, def: &WorkflowDef, issues: &mut Vec<Issue>) {
-        unguarded_validation(self.exprs, def, issues);
+        unguarded_validation(&self.trivial_conds, def, issues);
     }
 }
 
@@ -276,14 +319,12 @@ fn walk_duplicates(
     }
 }
 
-/// Whether a step's condition might gate what follows on a failure: it is
-/// present and does not constant-fold to `true` (`Expr::is_trivially_true`).
-fn gates(exprs: &ExprEngine, condition: Option<&Logic>) -> bool {
-    condition.is_some_and(|c| {
-        exprs
-            .compile::<datavalue::OwnedDataValue>(&c.0)
-            .map_or(true, |expr| !expr.is_trivially_true())
-    })
+/// Whether a step's condition at `step_path` might gate what follows on a
+/// failure: it is present and did not constant-fold to `true` during the
+/// compile walk.
+fn gates(trivial_conds: &HashSet<AuthoredPath>, has_cond: bool, step_path: &AuthoredPath) -> bool {
+    has_cond
+        && (trivial_conds.is_empty() || !trivial_conds.contains(&step_path.join("condition")))
 }
 
 /// `UNGUARDED_VALIDATION`: a `validation` task whose rejection nothing after
@@ -297,7 +338,11 @@ fn gates(exprs: &ExprEngine, condition: Option<&Logic>) -> bool {
 /// group the walk yields just before it, nested ones included.
 ///
 /// An Advisory at `<task>.on_rejection`, the key that fixes it.
-fn unguarded_validation(exprs: &ExprEngine, def: &WorkflowDef, issues: &mut Vec<Issue>) {
+fn unguarded_validation(
+    trivial_conds: &HashSet<AuthoredPath>,
+    def: &WorkflowDef,
+    issues: &mut Vec<Issue>,
+) {
     struct Link<'d> {
         path: AuthoredPath,
         kind: StepKind,
@@ -309,10 +354,12 @@ fn unguarded_validation(exprs: &ExprEngine, def: &WorkflowDef, issues: &mut Vec<
     let mut opening = false;
     for (path, kind, step) in def.walk() {
         match step {
-            StepDef::Group(group) => opening |= gates(exprs, group.condition.as_ref()),
+            StepDef::Group(group) => {
+                opening |= gates(trivial_conds, group.condition.is_some(), &path);
+            }
             StepDef::Task(task) => {
                 let guarded = opening
-                    || gates(exprs, task.condition.as_ref())
+                    || gates(trivial_conds, task.condition.is_some(), &path)
                     || BuiltinKind::from_name(&task.function.name) == Some(BuiltinKind::Filter);
                 chain.push(Link {
                     path,
@@ -377,7 +424,22 @@ impl ExprVisitor for Below<'_> {
             step: self.step,
             field,
         };
-        self.hook.expr(site, raw, self.issues);
+        self.hook.expr(site, raw, None, self.issues);
+    }
+
+    fn compiled_expr(&mut self, at: &AuthoredPath, expr: &dyn ResolveExpr, records: bool) {
+        let field = match at.segs().first() {
+            Some(PathSeg::Key(key)) => Some(&**key),
+            _ => None,
+        };
+        let at = self.root.extend(at);
+        let site = Site {
+            at: &at,
+            records,
+            step: self.step,
+            field,
+        };
+        self.hook.expr(site, expr.raw(), Some(expr), self.issues);
     }
 }
 

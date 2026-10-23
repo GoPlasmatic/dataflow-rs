@@ -15,7 +15,15 @@ export {
   ConditionBadge,
 } from './components/workflow-visualizer/cards';
 
-export { RulesListView, WorkflowFlowView, TreeView } from './components/workflow-visualizer/views';
+export {
+  RulesListView,
+  WorkflowFlowView,
+  TreeView,
+  DataLogicView,
+  DEFAULT_TEMPLATE_KEY_ESCAPE,
+  createSecretOperator,
+} from './components/workflow-visualizer/views';
+export type { DataLogicViewProps } from './components/workflow-visualizer/views';
 
 // Debug components
 export {
@@ -44,6 +52,8 @@ export {
   useWorkflowConditionDebugState,
   useTaskDebugState,
   useTaskConditionDebugState,
+  useMappingDebugState,
+  useValidationRuleDebugState,
 } from './components/workflow-visualizer/hooks';
 export type { TreeNodeDebugState } from './components/workflow-visualizer/hooks';
 
@@ -103,13 +113,18 @@ export type {
   EngineFactory,
   // Debug config type
   DebugConfig,
+  // DataLogic types
+  DataLogicEvaluationConfig,
+  DataLogicCustomOperator,
 } from './types';
 
 export {
   isTaskGroup,
   groupMembers,
   flattenSteps,
+  workflowTasks,
   countLeafSteps,
+  sortWorkflowsByPriority,
   isBuiltinFunction,
   getFunctionDisplayInfo,
   taskContinuesOnFailure,

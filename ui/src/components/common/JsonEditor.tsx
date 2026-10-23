@@ -85,6 +85,18 @@ export function JsonEditor({
 }: JsonEditorProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const decorationsRef = useRef<string[]>([]);
+  const cursorListenerRef = useRef<{ dispose(): void } | null>(null);
+  const onCursorChangeRef = useRef(onCursorChange);
+
+  useEffect(() => {
+    onCursorChangeRef.current = onCursorChange;
+  }, [onCursorChange]);
+
+  useEffect(() => {
+    return () => {
+      cursorListenerRef.current?.dispose();
+    };
+  }, []);
 
   const handleEditorMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
@@ -98,17 +110,16 @@ export function JsonEditor({
     });
 
     // Add cursor position listener
-    if (onCursorChange) {
-      editor.onDidChangeCursorPosition((e) => {
-        onCursorChange(e.position.lineNumber, e.position.column);
-      });
-    }
+    cursorListenerRef.current?.dispose();
+    cursorListenerRef.current = editor.onDidChangeCursorPosition((e) => {
+      onCursorChangeRef.current?.(e.position.lineNumber, e.position.column);
+    });
 
     // Focus the editor only if not readOnly
     if (!readOnly) {
       editor.focus();
     }
-  }, [onCursorChange, readOnly]);
+  }, [readOnly]);
 
   // Apply line decorations for highlighted paths
   useEffect(() => {

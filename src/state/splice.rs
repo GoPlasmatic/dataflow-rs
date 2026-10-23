@@ -356,6 +356,47 @@ pub(crate) fn update_object<'a, T>(
     Some((root, kinds, out?))
 }
 
+fn same_container_ptr(a: DataValue<'_>, b: DataValue<'_>) -> bool {
+    match (a, b) {
+        (DataValue::Object(a), DataValue::Object(b)) => std::ptr::eq(a, b),
+        (DataValue::Array(a), DataValue::Array(b)) => std::ptr::eq(a, b),
+        _ => false,
+    }
+}
+
+#[allow(clippy::too_many_arguments, reason = "recursive spine walk state")]
+fn step_object_child<'a, T, F>(
+    arena: &'a Bump,
+    current: DataValue<'a>,
+    rest: &[Seg],
+    depth: usize,
+    kinds: &mut u64,
+    update: &mut Option<F>,
+    out: &mut Option<T>,
+) -> Option<(DataValue<'a>, bool)>
+where
+    F: FnOnce(
+        &'a Bump,
+        &'a [(&'a str, DataValue<'a>)],
+    ) -> Option<(&'a [(&'a str, DataValue<'a>)], T)>,
+{
+    match rest.split_first() {
+        None => {
+            let DataValue::Object(obj) = current else {
+                return None;
+            };
+            let (updated, val) = update.take()?(arena, obj)?;
+            *out = Some(val);
+            Some((DataValue::Object(updated), std::ptr::eq(updated, obj)))
+        }
+        Some((next, after)) => {
+            let child =
+                update_object_in(arena, current, next, after, depth + 1, kinds, update, out)?;
+            Some((child, same_container_ptr(current, child)))
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments, reason = "recursive spine walk state")]
 fn update_object_in<'a, T, F>(
     arena: &'a Bump,
@@ -376,39 +417,11 @@ where
     match node {
         DataValue::Object(pairs) => {
             let at = pairs.iter().position(|(k, _)| **k == *seg.key)?;
-            let child = match rest.split_first() {
-                None => {
-                    let DataValue::Object(obj) = pairs[at].1 else {
-                        return None;
-                    };
-                    let (updated, val) = update.take()?(arena, obj)?;
-                    *out = Some(val);
-                    if std::ptr::eq(updated, obj) {
-                        return Some(node);
-                    }
-                    DataValue::Object(updated)
-                }
-                Some((next, after)) => {
-                    let child = update_object_in(
-                        arena,
-                        pairs[at].1,
-                        next,
-                        after,
-                        depth + 1,
-                        kinds,
-                        update,
-                        out,
-                    )?;
-                    if match (pairs[at].1, child) {
-                        (DataValue::Object(a), DataValue::Object(b)) => std::ptr::eq(a, b),
-                        (DataValue::Array(a), DataValue::Array(b)) => std::ptr::eq(a, b),
-                        _ => false,
-                    } {
-                        return Some(node);
-                    }
-                    child
-                }
-            };
+            let (child, unchanged) =
+                step_object_child(arena, pairs[at].1, rest, depth, kinds, update, out)?;
+            if unchanged {
+                return Some(node);
+            }
             Some(DataValue::Object(replaced(arena, pairs, at, child)))
         }
         DataValue::Array(items) => {
@@ -417,39 +430,11 @@ where
                 return None;
             }
             *kinds |= 1 << depth;
-            let child = match rest.split_first() {
-                None => {
-                    let DataValue::Object(obj) = items[at] else {
-                        return None;
-                    };
-                    let (updated, val) = update.take()?(arena, obj)?;
-                    *out = Some(val);
-                    if std::ptr::eq(updated, obj) {
-                        return Some(node);
-                    }
-                    DataValue::Object(updated)
-                }
-                Some((next, after)) => {
-                    let child = update_object_in(
-                        arena,
-                        items[at],
-                        next,
-                        after,
-                        depth + 1,
-                        kinds,
-                        update,
-                        out,
-                    )?;
-                    if match (items[at], child) {
-                        (DataValue::Object(a), DataValue::Object(b)) => std::ptr::eq(a, b),
-                        (DataValue::Array(a), DataValue::Array(b)) => std::ptr::eq(a, b),
-                        _ => false,
-                    } {
-                        return Some(node);
-                    }
-                    child
-                }
-            };
+            let (child, unchanged) =
+                step_object_child(arena, items[at], rest, depth, kinds, update, out)?;
+            if unchanged {
+                return Some(node);
+            }
             Some(DataValue::Array(
                 arena
                     .alloc_slice_fill_with(items.len(), |i| if i == at { child } else { items[i] }),

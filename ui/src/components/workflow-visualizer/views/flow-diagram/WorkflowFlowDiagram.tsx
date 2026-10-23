@@ -43,18 +43,15 @@ export function WorkflowFlowDiagram({ workflow, onSelect }: WorkflowFlowDiagramP
         });
       } else if (conditionType === 'task') {
         const taskId = node.data.taskId as string | undefined;
-        const label = (node.data.label as string) ?? '';
-        const taskName = label.replace('\nCondition', '');
-        const tasks = workflowTasks(workflow);
-        const task =
-          (taskId ? tasks.find((t: Task) => t.id === taskId) : undefined) ??
-          tasks.find((t: Task) => t.name === taskName);
-        if (task?.condition) {
+        const groupCondition = node.data.groupCondition as JsonLogicValue | undefined;
+        const task = taskId ? workflowTasks(workflow).find((t: Task) => t.id === taskId) : undefined;
+        const condition = groupCondition ?? (task?.condition as JsonLogicValue | undefined);
+        if (task && condition !== undefined) {
           onSelect({
             type: 'task-condition',
             task,
             workflow,
-            condition: task.condition as JsonLogicValue,
+            condition,
           });
         }
       }
