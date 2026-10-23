@@ -1,16 +1,16 @@
 # Tasks
 
-A task is an individual processing unit within a workflow that calls one function. Tasks are the **THEN** in the IF → THEN model.
+A task is an individual processing step within a workflow that calls a single function. Tasks represent the **THEN** in the IF → THEN model.
 
 ## Overview
 
-Tasks are the building blocks of workflows. Each task:
+Each task in a workflow:
 
-- Calls a single function (built-in or host)
-- Can have a condition for conditional execution
-- Can modify the message context
-- Records its writes in the audit trail
-- Says what its outcome does, through `on_failure` and `on_rejection`
+- Calls one function (either a built-in function or a registered custom host function)
+- Optionally evaluates a JSONLogic `condition` to decide whether to run
+- Can read and modify the message context (`data`, `metadata`, `temp_data`)
+- Records its changes in the message's audit trail
+- Configures how failures and rejections are handled via `on_failure` and `on_rejection`
 
 ## Task Structure
 
@@ -39,26 +39,22 @@ Tasks are the building blocks of workflows. Each task:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `id` | string | Yes | Step identifier, unique across the workflow's steps (groups share the namespace) |
-| `name` | string | No | Human-readable name |
+| `id` | string | Yes | Unique step identifier within the workflow (shared across tasks and task groups) |
+| `name` | string | No | Human-readable display name |
 | `description` | string | No | Free-text description |
-| `condition` | JSONLogic | No | Whether the task runs (evaluated against the full context); absent means always |
-| `function` | object | Yes | The function to call: `{"name": ..., "input": {...}}`; `input` defaults to `{}` |
-| `on_failure` | string | No | What a failure (a `5xx` or an `Err`) does: `fail` (default) passes it to the workflow's `on_failure`, `continue` records it and runs the next task, `halt` ends the workflow |
-| `on_rejection` | string | No | What a rejection (a `4xx`) does: `continue` (default) runs the next task, `halt` ends the workflow |
-| `terminal` | boolean | No | End the workflow once this task has run (default: `false`); see [Control Flow](../advanced/control-flow.md) |
-| `for_each` | object | No | Run the function once per element of an array; see [Fan-Out](../advanced/for-each.md). Refused on a built-in |
-| `ext` | object | No | Host and UI data, kept verbatim and never read |
+| `condition` | JSONLogic | No | Condition evaluated against `{data, metadata, temp_data}`; when omitted, the task always runs |
+| `function` | object | Yes | Function call specification: `{"name": "...", "input": {...}}` (`input` defaults to `{}`) |
+| `on_failure` | string | No | Behavior on failure (`5xx` status or `Err`): `"fail"` (default) escalates to the workflow's `on_failure`, `"continue"` records the error and continues to the next task, `"halt"` stops the current workflow |
+| `on_rejection` | string | No | Behavior on rejection (`4xx` status): `"continue"` (default) continues to the next task, `"halt"` stops the current workflow |
+| `terminal` | boolean | No | If `true`, ends the current workflow after this task runs (default: `false`); see [Control Flow](../advanced/control-flow.md) |
+| `for_each` | object | No | Fan-out configuration to run a host function once per array element; see [Fan-Out](../advanced/for-each.md) (not supported on built-in functions) |
+| `ext` | object | No | Custom host or UI metadata preserved verbatim by the parser |
 
-An element of `tasks` carrying a `tasks` key is a group, not a task: a span of
-steps sharing one condition, evaluated once on entry. See
-[Control Flow](../advanced/control-flow.md#groups).
+> **Task Groups:** An entry in a workflow's `tasks` array that contains a nested `tasks` key (instead of `function`) is parsed as a **task group** (`GroupDef`)—a sequence of steps gated by a shared condition. See [Control Flow → Groups](../advanced/control-flow.md#groups).
 
-## Reading a Parsed Task
+## Inspecting Parsed Tasks in Rust
 
-A definition is plain data. `def::parse` gives a `WorkflowDef` whose `tasks`
-are `StepDef`s, each a `Task(TaskDef)` or a `Group(GroupDef)`, and
-`WorkflowDef::walk` visits every step with its authored path:
+`def::parse` produces a `WorkflowDef` whose `tasks()` slice contains `StepDef::Task(TaskDef)` and `StepDef::Group(GroupDef)` items. Use `WorkflowDef::walk` to iterate through all steps in pre-order along with their JSON paths:
 
 ```rust
 use dataflow_rs::def::{FailurePolicy, ParseOptions, RejectionPolicy, StepDef, parse};
@@ -82,17 +78,16 @@ assert_eq!(task.on_failure(), FailurePolicy::Continue);
 assert_eq!(task.on_rejection(), RejectionPolicy::Continue);
 assert!(task.condition().is_none());
 
-// Every step, pre-order, each group before its members.
+// Walk every step in pre-order (each group is visited before its child steps).
 let paths: Vec<String> = def.walk().map(|(path, _, step)| format!("{path} = {}", step.id())).collect();
 assert_eq!(paths, ["tasks[0] = apply_discount", "tasks[1] = guard", "tasks[1].tasks[0] = perk"]);
 ```
 
-The definition types are `#[non_exhaustive]`: read their fields, but build
-one through `parse`, which is where every structural rule is checked.
+Definition structs are marked `#[non_exhaustive]`; construct them by parsing JSON via `def::parse` so all structural validation rules are enforced.
 
 ## Function Configuration
 
-The `function` object specifies what the task does:
+The `function` block specifies which function to call and its `input` configuration:
 
 ```jsonc
 {
@@ -107,22 +102,20 @@ The `function` object specifies what the task does:
 
 | Function | Purpose |
 |----------|---------|
-| `map` | Data transformation and field mapping |
-| `validation` | Data validation with custom error messages |
-| `filter` | Pipeline control flow: halt the workflow or skip the task |
-| `log` | Structured logging with JSONLogic expressions |
-| `parse_json` | Parse JSON from the payload, or a context path, into `data` |
-| `parse_xml` | Parse an XML string into a JSON data structure |
-| `publish_json` | Serialize data to a JSON string |
-| `publish_xml` | Serialize data to an XML string |
+| `map` | Transform data and write values to `data`, `metadata`, or `temp_data` |
+| `validation` | Validate context fields against JSONLogic rules and record custom error messages |
+| `filter` | Control pipeline execution: halt the workflow or skip the current task when a condition is false |
+| `log` | Emit structured log messages with dynamic JSONLogic fields |
+| `parse_json` | Parse or copy JSON from `payload` (or a context path) into `data` |
+| `parse_xml` | Parse an XML string from `payload` (or a context path) into `data` |
+| `publish_json` | Serialize a `data` object to a JSON string |
+| `publish_xml` | Serialize a `data` object to an XML string |
 
-The built-ins run inline, over the run's single view of the context. Their
-names are reserved: a host function cannot be registered under one.
+All eight built-in functions execute inline on the engine's context view. Their names are reserved and cannot be overwritten by custom host functions.
 
-### Host Functions
+### Custom Host Functions
 
-A host function implements `Function` with a typed `Config`, compiled from
-the task's `input` when the workflow is built:
+Custom host functions implement the `Function` trait with a typed `Config` struct (derived with `#[derive(FunctionConfig)]`) that is compiled from the task's `input` at build time:
 
 ```rust
 use dataflow_rs::datavalue::OwnedDataValue;
@@ -133,9 +126,9 @@ use serde_json::json;
 
 #[derive(FunctionConfig)]
 struct GreetConfig {
-    /// Who to greet: a literal or JSONLogic.
+    /// Name to greet (can be a literal string or a JSONLogic expression).
     name: Expr<String>,
-    /// Where the greeting is written.
+    /// Destination path where the greeting is written.
     #[output(default = "data.greeting")]
     output: Output,
 }
@@ -164,7 +157,7 @@ let engine = Engine::builder()
 # Ok(()) }
 ```
 
-Then reference it by name in a task:
+Reference your registered function by name in any task:
 
 ```json
 {
@@ -175,13 +168,11 @@ Then reference it by name in a task:
 }
 ```
 
-A task whose `function.name` is neither a built-in nor a registered function
-is an `UNKNOWN_FUNCTION` issue, and the workflow is rejected. See
-[Custom Functions](../advanced/custom-functions.md).
+If a task references a `function.name` that is neither a built-in nor registered in the `Registry`, compilation rejects the workflow with an `UNKNOWN_FUNCTION` issue. See [Custom Functions](../advanced/custom-functions.md) for details.
 
 ## Conditional Execution
 
-Tasks can have conditions that determine if they should run. Conditions evaluate against the **full context** (`data`, `metadata`, `temp_data`), and may read `{"secret": "name"}` from the engine's [secret store](../advanced/secrets.md). A condition collapses to a bool, so nothing of the value is recorded:
+A task's `condition` is evaluated against `{data, metadata, temp_data}` (and can also read `{"secret": "name"}` from the engine's [secret store](../advanced/secrets.md)). Because condition evaluation produces only a boolean, secret values used in conditions are never written to the message or trace:
 
 ```json
 {
@@ -199,22 +190,21 @@ Tasks can have conditions that determine if they should run. Conditions evaluate
 }
 ```
 
-A task whose condition is false is skipped: no audit entry, no
-`metadata.progress` write, and no event to an observer.
+When a task's condition evaluates to `false`, the task is skipped: no audit entry is added, `metadata.progress` is not modified, and no `TaskFinished` event is sent to observers.
 
-### Common Patterns
+### Common Condition Patterns
 
 ```jsonc
-// Only if field exists
+// Run only if field exists and is truthy
 {"!!": {"var": "data.email"}}
 
-// Only if field equals value
+// Run only if field equals a value
 {"==": [{"var": "data.status"}, "active"]}
 
-// Only if numeric condition
+// Run only if numeric threshold is met
 {">=": [{"var": "data.amount"}, 100]}
 
-// Combine conditions
+// Combine multiple conditions
 {"and": [
     {"!!": {"var": "data.email"}},
     {"==": [{"var": "data.verified"}, true]}
@@ -223,19 +213,19 @@ A task whose condition is false is skipped: no audit entry, no
 
 ## Outcomes and Policies
 
-A function call ends in one of four `Outcome`s, or an `Err`:
+Every task execution finishes with an `Outcome` or an `Err`, which the engine classifies as follows:
 
-| Result | Audit status | Class | Then |
+| Function Result | Audit Status | Classification | Next Step |
 |---|---|---|---|
-| `Outcome::Ok` | `200` | success | the next task runs |
-| `Outcome::Status(2xx or 3xx)` | that status | success | the next task runs |
-| `Outcome::Status(4xx)` | that status | rejection | `on_rejection` decides |
-| `Outcome::Status(5xx)` | that status | failure | `TASK_STATUS_ERROR` is recorded; `on_failure` decides |
-| `Err(error)` | `500` | failure | the error is recorded under its code; `on_failure` decides |
-| `Outcome::Skip` | no entry | | nothing is recorded; the next task runs |
-| `Outcome::Halt` | `299` | | the workflow ends; later workflows still run |
+| `Outcome::Ok` | `200` | Success | Run the next task |
+| `Outcome::Status(2xx or 3xx)` | `2xx` / `3xx` | Success | Run the next task |
+| `Outcome::Status(4xx)` | `4xx` | Rejection | Governed by `on_rejection` |
+| `Outcome::Status(5xx)` | `5xx` | Failure | Records `TASK_STATUS_ERROR`; governed by `on_failure` |
+| `Err(error)` | `500` | Failure | Records error under `error.code()`; governed by `on_failure` |
+| `Outcome::Skip` | *(no entry)* | Skipped | Nothing recorded; run the next task |
+| `Outcome::Halt` | `299` | Halted | Ends the current workflow; subsequent workflows still run |
 
-### Failure
+### Failure Policy (`on_failure`)
 
 ```jsonc
 {
@@ -245,13 +235,11 @@ A function call ends in one of four `Outcome`s, or an `Err`:
 }
 ```
 
-- `fail` (default): the failure passes to the workflow's `on_failure`, which
-  stops the run or, with `continue`, lets the next workflow run
-- `continue`: the failure is recorded in `message.errors()` and the next task
-  runs
-- `halt`: the failure is recorded and the workflow ends; later workflows run
+- **`"fail"`** (default) — Escalates the failure to the workflow's `on_failure` policy (which either stops the run or moves to the next workflow).
+- **`"continue"`** — Records the failure in `message.errors()` and continues to the next task in the workflow.
+- **`"halt"`** — Records the failure and ends the current workflow (`WorkflowExit::Halted`), while allowing subsequent workflows to run.
 
-### Rejection
+### Rejection Policy (`on_rejection`)
 
 ```jsonc
 {
@@ -261,20 +249,14 @@ A function call ends in one of four `Outcome`s, or an `Err`:
 }
 ```
 
-- `continue` (default): the next task runs. A failing `validation` returns
-  `400` and records a `VALIDATION_ERROR` per failing rule, so with the default
-  the pipeline proceeds as if it had passed; `Compiler::check` reports that
-  shape as the `UNGUARDED_VALIDATION` advisory
-- `halt`: the workflow ends at the rejected task; later workflows run
+- **`"continue"`** (default) — Continues to the next task. Note that a failed `validation` task returns status `400` (a rejection) and records `VALIDATION_ERROR` entries; if you leave `on_rejection` at `"continue"` and have tasks after it, those tasks will still run (`Compiler::check` flags this pattern with an `UNGUARDED_VALIDATION` advisory).
+- **`"halt"`** — Stops the current workflow when the task returns a `4xx` rejection, while allowing subsequent workflows to run.
 
-`terminal: true` is applied after the classification: a terminal task that
-fails still records its failure and still follows `on_failure`. It upgrades
-only a task that would otherwise go on to a halt. See
-[Error Handling](./error-handling.md) for the full matrix.
+> **Interaction with `terminal: true`:** `terminal` is evaluated after outcome policies. If a `terminal: true` task fails, it still follows its `on_failure` policy; if the task succeeds (or continues after a rejection/failure), `terminal: true` halts the rest of the current workflow. See [Error Handling](./error-handling.md) for the complete policy matrix.
 
 ## Sequential Execution
 
-Tasks execute in order within a workflow. Later tasks can use results from earlier tasks:
+Tasks execute sequentially in the order they appear in `tasks`. Each task immediately sees writes committed by earlier tasks:
 
 ```json
 {
@@ -305,8 +287,7 @@ Tasks execute in order within a workflow. Later tasks can use results from earli
 }
 ```
 
-A host function's writes are visible to its own later reads at once, and to
-the next task once the call returns `Ok`.
+Inside a custom host function, any write made via `Ctx` is immediately readable by later `ctx.get` / `ctx.eval` calls within the same invocation, and is committed to the shared message context once `call` returns `Ok`.
 
 ## Try It
 
@@ -315,23 +296,20 @@ the next task once the call returns `Ok`.
 <div class="playground-widget" data-workflows='[{"id":"conditional_tasks","name":"Conditional Tasks","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"check_premium","name":"Check Premium","condition":{"==":[{"var":"data.input.tier"},"premium"]},"function":{"name":"map","input":{"mappings":[{"path":"data.discount","logic":20}]}}},{"id":"check_standard","name":"Check Standard","condition":{"==":[{"var":"data.input.tier"},"standard"]},"function":{"name":"map","input":{"mappings":[{"path":"data.discount","logic":5}]}}},{"id":"apply_discount","name":"Apply Discount","function":{"name":"map","input":{"mappings":[{"path":"data.final_price","logic":{"-":[{"var":"data.input.price"},{"/":[{"*":[{"var":"data.input.price"},{"var":"data.discount"}]},100]}]}}]}}}]}]' data-payload='{"tier":"premium","price":100}'>
 </div>
 
-Try changing `tier` to "standard" to see a different discount applied.
+Try changing `"tier"` to `"standard"` in the payload to see a different discount task execute.
 
 ## Best Practices
 
-1. **Unique IDs** - Use descriptive, unique IDs for debugging; they appear in every audit entry, error record and trace step
-2. **Single Responsibility** - Each task should do one thing well
-3. **Use temp_data** - Store intermediate results in `temp_data`
-4. **Conditions** - Add conditions to skip unnecessary processing
-5. **Policies** - Use `on_failure: continue` for optional tasks, and `on_rejection: halt` on a validation that must gate the tasks after it
+1. **Use Descriptive, Unique IDs** — Task IDs appear in audit entries, error records, `metadata.progress`, and traces.
+2. **Keep Tasks Focused** — Give each task a clear, single responsibility.
+3. **Use `temp_data` for Scratch State** — Store intermediate values in `temp_data` rather than cluttering `data`.
+4. **Set Explicit Policies** — Use `"on_failure": "continue"` for non-critical enrichment tasks, and `"on_rejection": "halt"` on `validation` tasks that should block subsequent steps in the workflow.
 
-## From 3.x
+## Migrating from 3.x
 
-In 3.x a task's error handling was `continue_on_error` and `halt_on`, and
-tasks were built in Rust through `Task::action` on a `#[non_exhaustive]`
-`Task`. In 4.0 the two policies are `on_failure` and `on_rejection`, and a
-task is plain data (`TaskDef`) that enters through `def::parse`. The compat
-reader rewrites the 3.x keys: `continue_on_error: true` becomes
-`on_failure: continue`, `halt_on: "failure"` becomes `on_rejection: halt`,
-and both together become `on_failure: halt` with `on_rejection: halt`. See
-[Migrating from 3.x](../migration/from-3.md).
+In 3.x, task error handling used `continue_on_error` and `halt_on`, and tasks were constructed in Rust via `Task::action`. In 4.0, tasks use `on_failure` and `on_rejection` and are parsed via `def::parse` into `TaskDef`. The compatibility reader automatically rewrites 3.x task keys:
+- `continue_on_error: true` → `on_failure: "continue"`
+- `halt_on: "failure"` → `on_rejection: "halt"`
+- Both together → `on_failure: "halt"` and `on_rejection: "halt"`
+
+See [Migrating from 3.x](../migration/from-3.md) for details.

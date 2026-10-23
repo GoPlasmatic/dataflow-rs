@@ -1,7 +1,6 @@
 # Filter Function
 
-`filter` is a gate: it evaluates a condition and, when the condition is not
-met, either halts the workflow or skips the task. It writes nothing.
+The `filter` function acts as a control-flow gate inside a workflow: it evaluates a JSONLogic `condition` and, when the condition is not `true`, either halts the rest of the workflow or skips the current task. It is read-only and never modifies the message context.
 
 ```json
 {
@@ -19,24 +18,18 @@ met, either halts the workflow or skips the task. It writes nothing.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `condition` | JSONLogic | Yes | Lets the message through only when it evaluates to `true` |
-| `on_reject` | `"halt"` \| `"skip"` | No | What a rejected message does: `halt` (the default) stops the workflow, `skip` skips this task only |
+| `condition` | JSONLogic | Yes | Condition expression; passes only when it evaluates to boolean `true` |
+| `on_reject` | `"halt"` \| `"skip"` | No | Action when `condition` is not `true`: `"halt"` (default) stops the current workflow; `"skip"` skips only this task |
 
-Only a literal `true` passes. `false`, `null`, a missing path, `1`, `"true"`
-and `[1]` all reject, and record nothing. A condition that fails to evaluate
-rejects too, and records `EVALUATION_ERROR` (`Filter condition failed to
-evaluate: …`) on the message's errors, so a malformed filter is told apart
-from a gate closing; the run then completes with errors. A condition over the
-[ops budget](../advanced/jsonlogic.md) is no rejection: it fails the task with
-`BUDGET_EXCEEDED`, under its `on_failure`. Write a presence check as
-`{"!!": {"var": "data.email"}}`, not `{"var": "data.email"}`.
+- **Strict boolean check:** The filter passes only when `condition` evaluates to boolean `true`. Values like `false`, `null`, `1`, `"true"`, or `[1]` are rejected. Always write presence checks as `{"!!": {"var": "data.email"}}` rather than `{"var": "data.email"}`.
+- **Evaluation errors:** If `condition` fails to evaluate, the filter rejects the message and records an `EVALUATION_ERROR` (`Filter condition failed to evaluate: ...`) on `message.errors()` so broken expressions are visible.
+- **Operation budget:** If `condition` exceeds the `ExprEngine`'s [operation budget](../advanced/jsonlogic.md) (`ops_budget`), the task fails with `BUDGET_EXCEEDED` under `on_failure`.
 
-## What a rejection does
+## Rejection Behavior (`on_reject`)
 
-### `halt` (the default)
+### `"halt"` (Default)
 
-The workflow stops: no later task in it runs. The audit entry records status
-`299`, and the run goes on to the next workflow.
+Stops the current workflow immediately—no subsequent tasks in the workflow run. The audit trail records status `299`, the workflow exits with `WorkflowExit::Halted`, and execution continues to the next workflow in the program:
 
 ```json
 [
@@ -70,16 +63,11 @@ The workflow stops: no later task in it runs. The audit entry records status
 ]
 ```
 
-With `data.status` at `"closed"`, `require_active` records `299`, `process`
-never runs, and `audit` runs: `data` ends as
-`{"status": "closed", "audited": true}`.
+When `data.status` is `"closed"`, `require_active` records status `299`, `process` is skipped, and the `audit` workflow runs normally, leaving `data` as `{"status": "closed", "audited": true}`.
 
-### `skip`
+### `"skip"`
 
-Only this task is skipped; the next one runs. A skip records no audit entry
-and writes no `metadata.progress`, so a later condition reading
-`metadata.progress.task_id` sees the task before the filter. A `terminal` on
-a skipped filter does not fire.
+Skips only the `filter` task itself and continues to the next task in the workflow. A skipped filter writes no audit entry and does not update `metadata.progress` (so `metadata.progress.task_id` still reflects the task that ran before the filter). Note that `terminal: true` on a skipped filter does not trigger.
 
 ```json
 {
@@ -104,27 +92,21 @@ a skipped filter does not fire.
 }
 ```
 
-Without `data.coupon_code`, the audit trail holds `first` and `next`, each
-`200`, and nothing for `coupon`. A skip on its own gates nothing: pair the
-filter with the task it guards through a [group](../advanced/control-flow.md)
-or a `condition` on that task, or use `halt`.
+When `data.coupon_code` is absent, the audit trail contains `first` (`200`) and `next` (`200`), with no entry for `coupon`.
 
-## Status codes
+## Status Codes
 
-| Status | Meaning |
+| Audit Status | Meaning |
 |--------|---------|
-| `200` | The condition was `true`; the workflow continues |
-| `299` | Rejected under `halt`: the rest of the workflow does not run |
-| none | Rejected under `skip`: no audit entry, the next task runs |
-
-`299` is the status every `Halt` records, a host function's included, so a
-host can compare against it. See [Host Functions](./host-functions.md).
+| `200` | `condition` evaluated to `true`; workflow execution continues |
+| `299` | Rejected with `on_reject: "halt"`; remaining tasks in the current workflow are skipped |
+| *(no entry)* | Rejected with `on_reject: "skip"`; no audit entry is written and the next task runs |
 
 ## Examples
 
-### Guard clause
+### Guard Clause
 
-Stop a workflow whose input lacks what the rest of it needs:
+Stop a workflow early if a required field is missing:
 
 ```json
 {
@@ -149,9 +131,9 @@ Stop a workflow whose input lacks what the rest of it needs:
 }
 ```
 
-### Several conditions
+### Combining Multiple Conditions
 
-Combine them with `and` and `or`:
+Use `and` and `or` for compound guard conditions:
 
 ```json
 {
@@ -171,22 +153,8 @@ Combine them with `and` and `or`:
 }
 ```
 
-## Compared with a task condition
+## Choosing Between `filter`, Task `condition`, and `validation`
 
-A task's `condition` decides whether that one task runs; a `filter` under
-`halt` decides whether the rest of the workflow runs. A `filter` under `skip`
-is a task condition that records nothing, which is why a condition on the
-task itself is usually clearer. A `validation` that must stop the workflow is
-gated with `"on_rejection": "halt"` on the validation task, not with a
-`filter` after it: the filter's `299` would replace the `400` on
-`metadata.progress`. See [Validation](./validation.md#stopping-on-a-failure)
-and [Control Flow](../advanced/control-flow.md).
-
-## Notes
-
-- The condition is compiled when the engine is built; a condition that reads
-  nothing folds to a constant, so a literal `true` or `false` costs nothing.
-- `filter` never modifies the message's context; it only controls what runs.
-- An evaluation error rejects (`299` under the default `halt`) and records
-  `EVALUATION_ERROR` on the message's errors; exceeding the ops budget fails
-  the task with `BUDGET_EXCEEDED`, under its `on_failure`.
+- **To skip a single task:** Put a `condition` directly on that task (or wrap a span of tasks in a [task group](../advanced/control-flow.md#groups)).
+- **To exit the rest of a workflow silently when a precondition is not met:** Use a `filter` task with `"on_reject": "halt"` (or a `terminal: true` task/group).
+- **To validate data and record error messages when rules fail:** Use a [`validation`](./validation.md) task with `"on_rejection": "halt"`. Do not place a `filter` after `validation` just to halt, as the filter's `299` status would overwrite the validation's `400` status in `metadata.progress`.

@@ -1,26 +1,23 @@
 # Engine
 
-The `Engine` runs messages over a compiled program. It is the central component that selects workflows and orchestrates task execution.
+The `Engine` executes messages against a compiled `Program`. It is the central component that selects matching workflows and orchestrates task execution.
 
 ## Overview
 
-The Engine is responsible for:
+The `Engine` is responsible for:
 
-- Running messages through the program's active workflows, in priority order
-- Evaluating workflow and task conditions against the full message context
-- Applying each task's outcome policies and recording what happened
-- Routing a run to one channel's workflows, and admitting rollouts by bucket
-- Reporting each run through a `Run`, to observers as it goes, and in a trace when asked
-- Giving a host the compiler to build the next program for a reload
+- Running messages through active workflows in priority order
+- Evaluating workflow and task conditions against the full message context (`data`, `metadata`, `temp_data`)
+- Applying task and workflow outcome policies and recording audit entries and errors
+- Filtering workflows by `channel` and evaluating canary `rollout` buckets
+- Reporting execution outcomes via `Run`, emitting events to `Observer`s, and capturing `Trace`s when requested
+- Providing a pre-configured `Compiler` (`engine.compiler()`) to build updated programs for hot-reloading
 
-Building is a separate step. Definitions are parsed and linted by `def::parse`,
-compiled by a `Compiler` that a `Registry` gives, and linked into an immutable
-`Program`; the engine runs that program with its `EngineConfig`.
+Compilation happens ahead of time: workflow definitions are parsed and linted by `def::parse`, compiled by a `Compiler` created from a `Registry`, and linked into an immutable `Program`. The `Engine` pairs that `Program` with an `EngineConfig`.
 
 ## Creating an Engine
 
-`Engine::builder()` does the whole build for a host that does not quarantine:
-every definition must compile, or `build()` fails.
+`Engine::builder()` handles parsing, compilation, and linking in one step. If any workflow definition is invalid, `build()` returns `Err` with all collected issues.
 
 ```rust
 use dataflow_rs::Engine;
@@ -47,30 +44,21 @@ let second = json!({
 let engine = Engine::builder()
     .workflow_json(&first)
     .workflow_json(&second)
-    // .register("my_function", MyFunction)  // host functions go here
+    // .register("my_function", MyFunction)  // register custom host functions here
     .build()?;
 
-// Every expression is compiled, every function config typed.
+// All expressions and function configs are compiled upfront.
 println!("Loaded {} workflows", engine.program().workflows().len());
 # assert_eq!(engine.program().workflows().len(), 2);
 # Ok(()) }
 ```
 
-The builder's methods:
+### Builder Methods
 
-- `.workflow_json(&value)` parses a definition with the compat reader on, so a
-  3.x spelling loads and is reported; `.workflow(def)` adds a `WorkflowDef`
-  you parsed yourself
-- `.register("name", function)` adds a host [`Function`](../advanced/custom-functions.md);
-  `.layer(layer)` wraps every host call; `.registry(registry)` replaces the
-  registry, and with it the expression engine's operators, secrets and
-  budget, along with every function registered so far, so call it first
-- `.options(CompileOptions)` and `.config(EngineConfig)` set how the
-  definitions compile and how the engine runs
-- `.build()` returns `Result<Engine, Vec<Issue>>`: every issue of every
-  rejected definition, in input order, a definition's parse issues before its
-  compile issues. On success the Defects and Advisories are dropped; a host
-  that wants them calls `Compiler::check`
+- **`.workflow_json(&value)` / `.workflow(def)`** — `.workflow_json` parses a JSON definition with 3.x compatibility enabled; `.workflow` adds a `WorkflowDef` you parsed yourself.
+- **`.register("name", function)` / `.layer(layer)` / `.registry(registry)`** — `.register` adds a custom [`Function`](../advanced/custom-functions.md); `.layer` wraps host calls in a middleware layer; `.registry` replaces the entire `Registry` (including its `ExprEngine` operators, secrets, operation budget, and any previously registered functions—so call `.registry(...)` before `.register(...)`).
+- **`.options(CompileOptions)` / `.config(EngineConfig)`** — Configure compilation limits and runtime engine settings.
+- **`.build()`** — Returns `Result<Engine, Vec<Issue>>`. If any workflow is rejected, `build()` returns all issues from the rejected definitions in input order (parse issues followed by compile issues). If all workflows compile, non-fatal `Defect` and `Advisory` issues are discarded; use `Compiler::check` when you want to inspect warnings on valid definitions.
 
 ```rust
 use dataflow_rs::Engine;
@@ -88,11 +76,9 @@ assert_eq!(issues[0].path.to_string(), "tasks[0].function.name");
 println!("{}", issues[0]);
 ```
 
-### Quarantining a bad definition
+### Quarantining Invalid Definitions
 
-A host that loads definitions from storage usually wants the good ones to run
-while a bad one is reported. `Engine::new(program, config)` takes the program
-you link yourself, one workflow at a time:
+When loading workflows from a database or external store, you often want valid workflows to run even if one definition is broken. Use `Compiler::compile_one` and `Engine::new(program, config)` to compile workflows individually and skip any that fail:
 
 ```rust
 use dataflow_rs::def::{ParseOptions, parse};
@@ -114,8 +100,7 @@ let definitions = vec![
 let compiler = Registry::default().compiler(CompileOptions::default());
 let mut workflows = Vec::new();
 for raw in &definitions {
-    // `parse` never fails: the definition is `Some` exactly when no issue
-    // is Rejected.
+    // `parse` returns `Some(def)` whenever there are no `Rejected` parse issues.
     let parsed = parse(raw, ParseOptions::default());
     let Some(def) = parsed.def else {
         for issue in &parsed.issues {
@@ -136,10 +121,7 @@ let engine = Engine::new(compiler.link(workflows), EngineConfig::default());
 assert_eq!(engine.program().workflows().len(), 1);
 ```
 
-`compile_one` returns `Err` with every issue when any is Rejected, and `Ok`
-with the compiled workflow and its Defects and Advisories otherwise. `link`
-never fails: it sorts the workflows by priority (input order breaks ties) and
-indexes their tasks.
+`compile_one` returns `Err(issues)` if any issue has `Severity::Rejected`, or `Ok(Compiled)` containing the compiled workflow along with any `Defect` and `Advisory` issues. `link` never fails: it sorts the compiled workflows by `priority` (preserving input order for ties) and indexes their tasks.
 
 ## Running Messages
 
@@ -150,13 +132,13 @@ use dataflow_rs::Message;
 use dataflow_rs::run::RunStatus;
 use serde_json::json;
 
-// A message from a JSON payload.
+// Create a message from a JSON payload.
 let mut message = Message::from_json(&json!({
     "user": "john",
     "action": "login"
 }));
 
-// Run it through every active workflow. A `Run` comes back on every outcome.
+// Process the message through all active workflows.
 let run = engine.run(&mut message).await;
 
 match run.status() {
@@ -172,25 +154,16 @@ println!("audit entries: {}", message.audit().len());
 # }
 ```
 
-The `Run` reports:
+### What `Run` Reports
 
-- `status()`: `Completed`, `CompletedWithErrors` (every considered workflow
-  finished, but the message holds error records), `Stopped(error)` (a task's
-  failure stopped the run), `TimedOut` or `Cancelled` (the run's own deadline
-  or token)
-- `matched()`: how many workflows were selected and ran
-- `workflows()`: every workflow considered, in program order, up to and
-  including the one that stopped the run: its `selection` (`Ran`,
-  `SkippedByCondition`, `ConditionFailed(error)`, `SkippedByRollout`), its
-  `sweeps`, and its `exit` (`Completed`, `Halted`, `Failed`, `Stopped`)
-- `partial()`: whether the run ended before every workflow was considered;
-  `retryable()`: whether running the message again may succeed
-- `trace()` and `take_trace()`: the trace, when one was asked for
-- `into_result()`: `Ok(run)` unless the run was stopped, timed out or
-  cancelled, for a caller that wants a `?`
+- **`status()`** — `Completed`, `CompletedWithErrors` (all considered workflows finished, with one or more errors recorded on `message.errors()`), `Stopped(error)` (an unhandled task failure stopped the run), `TimedOut`, or `Cancelled`.
+- **`matched()`** — Number of workflows that matched and ran.
+- **`workflows()`** — Per-workflow execution records (`WorkflowRecord`) in priority order up to the point the run ended, including `selection` (`Ran`, `SkippedByCondition`, `ConditionFailed(error)`, `SkippedByRollout`), `sweeps` (iteration count), and `exit` (`Completed`, `Halted`, `Failed`, `Stopped`).
+- **`partial()` & `retryable()`** — `partial()` is `true` if the run stopped before considering all workflows; `retryable()` indicates whether retrying the message may succeed.
+- **`trace()` & `take_trace()`** — Returns the execution `Trace` if tracing was enabled in `RunOptions`.
+- **`into_result()`** — Converts `Run` into `Result<Run, Error>`, returning `Ok(run)` for `Completed` / `CompletedWithErrors` and `Err` for `Stopped`, `TimedOut`, or `Cancelled` (useful when you want to propagate fatal stops with `?`).
 
-If you already hold the payload as an `OwnedDataValue`, `Message::new` takes
-it directly, and an `Arc<OwnedDataValue>` is shared rather than copied:
+If you already have an `OwnedDataValue` (or `Arc<OwnedDataValue>`), pass it to `Message::new` to share the payload without cloning:
 
 ```rust
 use dataflow_rs::Message;
@@ -204,22 +177,21 @@ let b = Message::new(payload);
 assert_eq!(a.payload(), b.payload());
 ```
 
-### Run options
+### Run Options
 
-`run_with(&mut message, &RunOptions)` takes what a caller chooses about one
-run; `run` uses the defaults.
+Use `engine.run_with(&mut message, &RunOptions)` to customize a single run:
 
-| Option | Default | What it does |
+| Option | Default | Description |
 |---|---|---|
-| `channel(&str)` | every active workflow | Run only the active workflows of this channel; `metadata.channel` is stamped |
-| `routing_bucket(u8)` | none | The bucket rollouts are tested against; no bucket is admitted by every rollout |
-| `capture_changes(bool)` | `true` | Record each write's `Change` in its task's audit entry |
-| `audit(AuditMode)` | `Full` | Which audit entries the message keeps: `Full`, `Last(n)` or `Off` |
-| `deadline(Instant)` | none | End the run `TimedOut` once it passes; checked at every host call, fan-out element, sweep and every 64th op, and a host call is raced against it |
-| `cancel(&CancelToken)` | none | End the run `Cancelled` once the token is cancelled; checked where the deadline is |
-| `layers(&[Arc<dyn CallLayer>])` | none | Wrap every host call of this run, outside the registry's layers |
-| `observer(&dyn Observer)` | none | Report this run to an observer, beside the engine's |
-| `trace(TraceOptions)` | none | Record a trace, read back from `Run::trace` |
+| `channel(&str)` | All active workflows | Run only active workflows assigned to this channel (also stamps `metadata.channel`). |
+| `routing_bucket(u8)` | None | Canary rollout bucket (`0..=99`). When omitted, all workflow rollouts match. |
+| `capture_changes(bool)` | `true` | Record old and new field values (`Change`) in each task's audit entry. |
+| `audit(AuditMode)` | `Full` | Which audit entries to keep on the message: `Full`, `Last(n)`, or `Off`. |
+| `deadline(Instant)` | None | End the run with `TimedOut` once the deadline passes. Checked at every host call, fan-out element, loop sweep, and every 64th expression op; async host calls are raced against a Tokio timer. |
+| `cancel(&CancelToken)` | None | End the run with `Cancelled` when the token is triggered (checked at the same points as `deadline`). |
+| `layers(&[Arc<dyn CallLayer>])` | None | Wrap host calls for this run in additional middleware layers outside the registry's layers. |
+| `observer(&dyn Observer)` | None | Send execution events for this run to an additional observer alongside the engine's observer. |
+| `trace(TraceOptions)` | None | Record an execution trace accessible via `Run::trace()`. |
 
 ```rust
 # use dataflow_rs::{Engine, Message};
@@ -234,18 +206,15 @@ let run = engine.run_with(&mut message, &opts).await;
 # }
 ```
 
-A deadline needs a Tokio runtime with its time driver, since a host call is
-raced against it on a Tokio timer. Only the run's own limits end it `TimedOut`
-or `Cancelled`: a function's own timeout error is its task's failure, handled
-by the task's `on_failure`.
+> **Note:** Using `RunOptions::deadline` requires a Tokio runtime with the `time` feature enabled, because async host calls are raced against `tokio::time::sleep_until`. Only the run's own deadline or cancel token sets `RunStatus::TimedOut` or `RunStatus::Cancelled`; if a custom host function returns its own timeout error, it is handled like any other task failure under the task's `on_failure` policy.
 
 ## Execution Tracing
 
-Ask for a trace with `RunOptions::trace`. The `Run` then carries a `Trace`: the
-context after the run's stamps and before any workflow (`initial`), then one
-`TraceStep` per recorded call, skipped step, failure and engine write, each
-with the changes it made. A trace comes back on every status, the step that
-stopped the run included.
+Enable tracing on a run with `RunOptions::trace(TraceOptions)`. The returned `Run` will carry a `Trace` containing:
+- `initial`: the message context right after initial run stamps (`processed_at`, `engine_version`, `channel`) and before any workflow runs.
+- `steps`: one `TraceStep` for every task call, skipped step, failure, and engine write, along with the `changes` it made.
+
+Traces are returned on every run status, including `Stopped`, `TimedOut`, and `Cancelled`.
 
 ```rust
 # use dataflow_rs::{Engine, Message};
@@ -268,23 +237,18 @@ for step in &trace.steps {
     );
 }
 
-// Replay the changes from `initial`: the context after each step.
+// Replay step changes starting from `trace.initial` to inspect the context after each step.
 for (step, context) in trace.steps.iter().zip(trace.contexts()) {
     println!("after {:?}: {:?}", step.task_id, context.data());
 }
 # }
 ```
 
-A step's `result` is `Executed` (a call ran, or the engine wrote, and the run
-went on), `Skipped` (a condition or a rollout refused it) or `Failed` (the
-failure went to the workflow's policy or stopped the run). Its `errors` are
-the records the step added to the message. A `map` step's `mapping_ends` say
-where each mapping's changes end, and `Trace::mapping_contexts` replays them
-one mapping at a time.
+Each step's `result` is `Executed` (the task or engine write ran and execution continued), `Skipped` (skipped due to a false condition or rollout mismatch), or `Failed` (the failure was handled by the workflow policy or stopped the run). `step.errors` holds any error records added during that step. For `map` tasks, `step.mapping_ends` marks the boundary after each mapping so `Trace::mapping_contexts` can reconstruct the context after individual mappings.
 
-### Bounding what a trace captures
+### Controlling Trace Overhead and Redaction
 
-`TraceOptions` has four knobs:
+`TraceOptions` provides four settings to bound and sanitize traces:
 
 ```rust
 # use dataflow_rs::{Engine, Message};
@@ -293,14 +257,14 @@ use dataflow_rs::observe::TraceOptions;
 use dataflow_rs::run::RunOptions;
 
 let trace = TraceOptions::default()
-    // Time each call, into its step's `elapsed`. Off by default: no clock
-    // is read for a trace without it.
+    // Measure each task's execution duration in `step.elapsed` (off by default).
     .timings(true)
-    // Never let these subtrees reach the trace. `initial` and every change
-    // at or below them read `null`; the live message keeps its real values.
+    // Redact sensitive subtrees in the trace: `initial` and any changes at or
+    // below these paths are replaced with `null` in the trace while the live
+    // message retains the real values.
     .redact(vec!["data.card.pan".parse()?])
-    // A ceiling on what the trace holds. The step that would cross it, and
-    // every later one, keeps everything but its changes.
+    // Cap the total byte size of recorded changes. Once exceeded, subsequent
+    // steps keep their metadata and status but omit `changes`, and `trace.truncated` is set.
     .max_bytes(256 * 1024);
 let run = engine.run_with(&mut message, &RunOptions::default().trace(trace)).await;
 
@@ -310,16 +274,11 @@ if run.trace().is_some_and(|t| t.truncated) {
 # Ok(()) }
 ```
 
-The fourth, `.changes(false)`, keeps statuses and timings only, for
-profiling; such a trace cannot be replayed. A trace records its own changes
-whatever `RunOptions::capture_changes` says, which governs only the audit
-trail.
+The fourth setting, `.changes(false)`, records step statuses and timings without capturing context diffs (useful for lightweight profiling, though the resulting trace cannot replay contexts). Note that trace change capture is independent of `RunOptions::capture_changes`, which controls only `message.audit()`.
 
-## Always-on Per-task Metrics
+## Always-On Metrics with `Observer`
 
-A trace is a per-request allocation you keep. For aggregation (counters,
-histograms, spans), attach an `Observer`. It is called inline with each
-event its `interest` names, on every run, with no trace involved:
+While a `Trace` allocates a per-run log for debugging, an `Observer` provides zero-allocation, inline callbacks for metrics (counters, histograms, tracing spans) across every run:
 
 ```rust
 use dataflow_rs::observe::{Event, Interest, Observer};
@@ -336,14 +295,14 @@ struct Metrics {
 }
 
 impl Observer for Metrics {
-    // Asking for TIMINGS is what makes the clock be read: an observer that
-    // only counts leaves it unread.
+    // Include `Interest::TIMINGS` only when you need `elapsed` durations;
+    // omitting it avoids per-task clock reads.
     fn interest(&self) -> Interest {
         Interest::TASKS | Interest::TIMINGS
     }
 
     fn on(&self, event: &Event<'_>) {
-        // Must be cheap and non-blocking; see the contract below.
+        // Runs synchronously on the caller's thread: keep it fast and non-blocking.
         if let Event::TaskFinished { elapsed, .. } = event {
             self.tasks.fetch_add(1, Ordering::Relaxed);
             if let Some(elapsed) = elapsed {
@@ -370,53 +329,28 @@ assert_eq!(metrics.tasks.load(Ordering::Relaxed), 1);
 # }
 ```
 
-An observer attached through `EngineConfig::observer` sees every run of the
-engine; one passed as `RunOptions::observer(&o)` sees that run only, beside
-the engine's. Each is called only with the events its `interest()` names,
-read once per run: `WORKFLOWS` for `WorkflowStarted` and `WorkflowFinished`,
-`TASKS` for `TaskFinished`, and `TIMINGS` to have each `elapsed` filled in.
-Every observer receives `RunStarted` and `RunFinished`. The default interest
-is `WORKFLOWS | TASKS`, which reads no clock.
+An observer configured on `EngineConfig::observer` receives events for every run of the engine, while `RunOptions::observer(&obs)` attaches an observer to a single run. `interest()` is checked once at the start of each run:
+- `Interest::WORKFLOWS`: enables `WorkflowStarted` and `WorkflowFinished`.
+- `Interest::TASKS`: enables `TaskFinished`.
+- `Interest::TIMINGS`: populates `elapsed` on workflow and task finish events.
+- `RunStarted` and `RunFinished` are always delivered to every active observer.
+- The default `Interest` is `WORKFLOWS | TASKS` (no per-step clock reads).
 
-`Event::TaskFinished` carries the call's `info` (`workflow_id`, `task_id`,
-`function`, `loop_counter`, `element_index`), its `status` and its `elapsed`.
-Notes on the edges:
+### Event Details
 
-- **`status`** is `None` when the function returned `Outcome::Skip` (the body
-  ran, but no audit entry was recorded), and `Some(500)` when the task
-  returned `Err`. Failing tasks are reported, not dropped.
-- **A task whose condition evaluated false is not reported**: it was never
-  dispatched, so there is nothing to time.
-- **A fan-out** reports once per element it folds.
-- **`elapsed`** is the call alone, the recording not included, and is `Some`
-  only for an observer whose interest holds `TIMINGS`.
+- **`Event::TaskFinished`** carries `info` (`workflow_id`, `task_id`, `function`, `loop_counter`, `element_index`), `status`, and `elapsed`:
+  - `status` is `None` when the function returned `Outcome::Skip`, and `Some(500)` when the function returned `Err`.
+  - Tasks skipped because their condition evaluated to `false` do not emit `TaskFinished`.
+  - A `for_each` fan-out task emits `TaskFinished` once for each element it folds.
+  - `elapsed` measures the function call itself and is `Some` only when `Interest::TIMINGS` is set.
+- **`Event::WorkflowStarted` & `Event::WorkflowFinished`** fire only for workflows that actually run (workflows skipped by condition or rollout do not emit events). A looping workflow emits a single `WorkflowFinished` event covering all sweeps.
+- **`Event::RunStarted`** reports `considered` (the number of active workflows in the target channel before rollout or condition checks). **`Event::RunFinished`** reports the final `RunStatus` and total error count on the message.
 
-The callback runs on the run's thread. Keep it non-blocking, do not re-enter
-the engine, and do not panic (a panic unwinds out of `run`). Push to a channel
-or increment an atomic counter. Match event variants with `..` because each
-variant is `#[non_exhaustive]`.
-
-### Workflow and run lifecycle
-
-The other events follow the same rules:
-
-- `WorkflowStarted` fires once a workflow is selected, and `WorkflowFinished`
-  when it ends, with its `WorkflowRecord` (`selection`, `sweeps`, `exit`) and,
-  under `TIMINGS`, the time since it started. A workflow its rollout or its
-  condition refused never starts: no event, the same way a skipped task goes
-  unreported.
-- A **looping** workflow reports **one** `WorkflowFinished` for the whole
-  loop, carrying `sweeps`.
-- `RunStarted` carries `considered`: how many workflows the run considers,
-  which is its channel's active ones, before any rollout or condition is
-  judged. `RunFinished` carries the `status` and how many error records the
-  message holds, whether the run completed or was cut short.
+> **Important:** `Observer::on` runs synchronously on the execution path. Keep it non-blocking, do not call back into the engine, and do not panic. Always include `..` when pattern-matching `Event` variants, as they are marked `#[non_exhaustive]`.
 
 ## Workflow Execution Order
 
-Workflows run in priority order (lowest first); equal priorities keep their
-input order. Only `active` workflows run: a `paused` or `archived` one is kept
-in the program and never selected.
+Workflows execute in ascending `priority` order (lowest number first), with ties broken by the order they were added to the program. Only `active` workflows run; `paused` and `archived` workflows remain in the compiled program for inspection but are skipped during execution.
 
 ```jsonc
 [
@@ -425,16 +359,11 @@ in the program and never selected.
 ]
 ```
 
-With `RunOptions::channel`, only that channel's active workflows are
-considered; an unknown channel runs nothing, and still stamps the message. A
-workflow with a `rollout` is skipped when the run's `routing_bucket` falls
-outside its range; a run with no bucket is admitted by every rollout. See
-[Workflows](./workflow.md#workflow-lifecycle).
+When `RunOptions::channel` is set, only active workflows in that channel are considered. When a workflow specifies a `rollout` range, it is skipped if the run's `routing_bucket` falls outside that range (runs without a `routing_bucket` match all rollouts). See [Workflows](./workflow.md#workflow-lifecycle) for details.
 
 ## Workflow Conditions
 
-A workflow's condition decides whether it runs. The engine evaluates it
-against the **full message context** (`data`, `metadata`, and `temp_data`):
+A workflow's `condition` determines whether it runs. The engine evaluates it against the full message context (`data`, `metadata`, and `temp_data`):
 
 ```jsonc
 {
@@ -445,23 +374,17 @@ against the **full message context** (`data`, `metadata`, and `temp_data`):
 }
 ```
 
-Only a literal `true` selects the workflow: `1` or a non-empty string does
-not. A condition that fails to evaluate counts as false; the `Run` reports
-that workflow as `Selection::ConditionFailed(error)`, and nothing is recorded
-on the message.
+A condition matches only when it evaluates to boolean `true` (truthy values like `1` or non-empty strings do not select the workflow). If a condition fails with an evaluation error, it is treated as `false` and recorded on `Run` as `Selection::ConditionFailed(error)`.
 
-## Host Functions
+## Custom Host Functions
 
-Register host functions on the builder. `.register("name", f)` accepts any
-[`Function`](../advanced/custom-functions.md); the engine compiles each task's
-`input` into the function's typed `Config` at build time, so a mis-shaped
-config fails `build()` rather than the first message.
+Register custom async functions on `EngineBuilder` with `.register("name", func)`. Each task's `input` is compiled into your function's `Function::Config` type at build time, catching configuration errors before any message is processed:
 
 ```rust
 use dataflow_rs::{Ctx, Engine, Function, Outcome, Result};
 use serde_json::json;
 
-/// A function that takes no input and writes nothing.
+/// A simple host function that takes no config and makes no writes.
 struct Ping;
 
 impl Function for Ping {
@@ -483,16 +406,11 @@ let engine = Engine::builder()
 # Ok(()) }
 ```
 
-A host function's writes go to an overlay of its own and reach the message
-only when the call returns `Ok`; an `Err` drops them and keeps the records
-the call added. The eight built-in names are reserved: registering one
-panics.
+During execution, a host function's writes are buffered in a per-call overlay and committed to the message only when `call` returns `Ok`. Returning `Err` discards all context writes from that call while preserving any explicit error records added via `Ctx::record_error`. Note that the 8 built-in function names are reserved; attempting to register a custom function under a built-in name will panic.
 
-## Thread Safety
+## Thread Safety & Concurrency
 
-The engine is `Send + Sync`, and `Clone` is an `Arc` bump: clones share the
-program and the config. Each message is processed independently, so a server
-runs many messages at once:
+`Engine` is `Send + Sync`, and `Engine::clone` is a cheap `Arc` reference count increment that shares the compiled program and configuration across threads. Because all mutable state lives on the `Message`, you can process many messages concurrently across Tokio tasks:
 
 ```rust
 # use dataflow_rs::{Engine, Message};
@@ -515,14 +433,11 @@ for handle in handles {
 # }
 ```
 
-The run future is `Send`, host calls and layers included.
+The future returned by `engine.run` / `engine.run_with` is `Send`.
 
-## Reloading Workflows
+## Hot-Reloading Workflows
 
-A program is immutable. To change the workflows, compile a new program with
-the engine's own compiler, which carries the same registry (functions,
-layers, operators and secrets) and compile options, and pair it with the
-engine's config through `with_program`:
+Because a `Program` is immutable, you reload workflows by compiling a new `Program` with `engine.compiler()`—which reuses the engine's `Registry` (custom functions, layers, operators, and secrets) and `CompileOptions`—and swapping it in with `engine.with_program`:
 
 ```rust
 # use dataflow_rs::Engine;
@@ -539,59 +454,38 @@ for raw in &new_definitions {
 }
 let reloaded = engine.with_program(compiler.link(workflows));
 
-// `engine` is unchanged and still serves the runs in flight; `reloaded`
-// runs the new program with the same observer and error context.
+// `engine` is unchanged and finishes any in-flight runs; `reloaded`
+// serves new runs with the updated program and the same `EngineConfig`.
 # let _ = reloaded;
 # Ok(()) }
 ```
 
-A bad definition surfaces as issues here, before anything is swapped, so a
-broken reload never replaces a working engine.
+If any new definition fails to parse or compile, you catch the issues before swapping, so a bad update never disrupts a running engine.
 
-## API Reference
+## API Summary
 
 ### `Engine::builder()`
-
-Returns an `EngineBuilder`. Chain `.workflow_json(&value)`,
-`.workflow_json_owned(value)`, `.workflow(def)`, `.register("name", function)`,
-`.layer(layer)`, `.registry(registry)`, `.options(CompileOptions)`,
-`.config(EngineConfig)`, then `.build() -> Result<Engine, Vec<Issue>>`.
+Returns an `EngineBuilder`. Chain `.workflow_json(&value)`, `.workflow_json_owned(value)`, `.workflow(def)`, `.register("name", function)`, `.layer(layer)`, `.registry(registry)`, `.options(CompileOptions)`, and `.config(EngineConfig)`, then call `.build() -> Result<Engine, Vec<Issue>>`.
 
 ### `EngineConfig`
-
-What an engine is configured with beside its program; a reload keeps it.
-`EngineConfig::default().observer(Arc<dyn Observer>)` reports every run to
-an observer; `.error_context(ErrorContext::new(path, limit)?)` mirrors each
-failure's code into the context at `path`, keeping the newest `limit`
-records. See [Error Handling](./error-handling.md#branching-on-task-failures).
+Holds engine-wide runtime settings preserved across reloads:
+- `.observer(Arc<dyn Observer>)`: attaches an always-on observer to every run.
+- `.error_context(ErrorContext::new(path, limit)?)`: mirrors task failure codes into `path` on the message context (retaining up to `limit` newest records). See [Error Handling](./error-handling.md#branching-on-task-failures).
 
 ### `Engine::new(program, config)`
+Constructs an `Engine` from a pre-linked `Program` and an `EngineConfig`.
 
-An engine running `program` with `config`. The program comes from a
-`Compiler`: `Registry::default().compiler(CompileOptions::default())`, then
-`compile_one` per definition and `link`.
-
-### `engine.run(&mut message)` and `engine.run_with(&mut message, &opts)`
-
-Run a message through the program's active workflows, those of
-`opts.channel` when it names one, in priority order. Both return a `Run`.
-The message is modified in place: its context, audit trail and errors.
+### `engine.run(&mut message)` & `engine.run_with(&mut message, &opts)`
+Executes `message` through active workflows in priority order and returns a `Run`. Mutates `message` in place (updating its context, audit trail, and error list).
 
 ### `engine.compiler()`
-
-A compiler with the program's registry and options, whose workflows link into
-a program this engine can run.
+Returns a `Compiler` sharing this engine's `Registry` and `CompileOptions`.
 
 ### `engine.with_program(program)`
-
-An engine running `program` with this engine's config: a reload. This engine
-is unchanged.
+Returns a new `Engine` that pairs `program` with this engine's `EngineConfig`.
 
 ### `engine.program()`
-
-The program this engine runs. `program().workflows()` lists every linked
-workflow (`id`, `channel`, `priority`, `status`, `version`), the paused and
-archived ones too, and `program().tasks()` every task.
+Returns a reference to the compiled `Program`. `program().workflows()` lists metadata for all linked workflows (`id`, `channel`, `priority`, `status`, `version`, including `paused` and `archived` workflows), and `program().tasks()` lists all compiled tasks:
 
 ```rust
 # fn _demo(engine: dataflow_rs::Engine) {
@@ -601,14 +495,14 @@ for workflow in engine.program().workflows() {
 # }
 ```
 
-## From 3.x
+## Migrating from 3.x
 
-In 3.x the engine was built from `Workflow` values and run with the
-`process_message` family (`process_message_with_trace`,
-`process_message_tracing`, `process_message_for_channel` and their twins),
-observed through `ExecutionObserver`'s five callbacks, traced into an
-`ExecutionTrace` of snapshots, and reloaded with `with_new_workflows`. In 4.0
-every run goes through `run` or `run_with` and comes back as a `Run`; the
-channel, the trace and the observer are run options; the trace holds changes
-rather than snapshots; and a reload is `compiler()`, `link` and
-`with_program`. See [Migrating from 3.x](../migration/from-3.md).
+In 3.x, the engine was constructed from `Workflow` structs and executed via the `process_message*` methods (`process_message_with_trace`, `process_message_for_channel`, etc.), observed via a five-method `ExecutionObserver` trait, traced with full-message snapshots, and reloaded with `with_new_workflows`.
+
+In 4.0:
+- Every execution goes through `run` or `run_with` and returns a `Run`.
+- Channels, traces, deadlines, and per-run observers are configured on `RunOptions`.
+- Traces store compact per-step diffs instead of full message snapshots.
+- Hot-reloading uses `engine.compiler()`, `compiler.link(...)`, and `engine.with_program(...)`.
+
+See [Migrating from 3.x](../migration/from-3.md) for the complete migration guide.

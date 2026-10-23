@@ -1,24 +1,22 @@
 # Message
 
-A Message is the data container that flows through workflows, carrying a payload, the context, an audit trail and the errors recorded along the way.
+A `Message` is the data container that flows through the engine, carrying the input payload, the mutable evaluation context, an audit trail of changes, and any recorded errors.
 
 ## Overview
 
-A message holds:
+Every `Message` contains:
 
-- **id** - A UUID v7, unless you set one
-- **payload** - The body as the engine received it; not part of the evaluation context
-- **context.data** - Main data payload
-- **context.metadata** - Message metadata (routing, source info, the engine's stamps)
-- **context.temp_data** - Temporary processing data
-- **audit_trail** - One entry per task that ran, with the writes it made
-- **errors** - Every error recorded during processing
+- **`id`** — Unique message identifier (defaults to a generated UUID v7 unless set explicitly).
+- **`payload`** — The raw input value passed into the engine (read-only and separate from the JSONLogic evaluation context).
+- **`context.data`** — Primary business data read and transformed by workflows.
+- **`context.metadata`** — Message and execution metadata (routing headers, source info, and engine stamps).
+- **`context.temp_data`** — Temporary scratch data shared between tasks during processing.
+- **`audit_trail`** — Ordered list of `AuditEntry` records, one per executed task, detailing the changes made.
+- **`errors`** — Ordered list of `ErrorRecord` entries recorded during execution.
 
-## Message Structure
+## Message Structure and Serialization
 
-The fields are private, behind accessors, and the message is pure wire data:
-it serializes as `{id, payload, context, audit_trail, errors}`, in that
-order, and reads back from what it writes.
+`Message` fields are accessed via methods and serialize cleanly to and from JSON as `{id, payload, context, audit_trail, errors}` in that exact key order:
 
 ```rust
 use dataflow_rs::Message;
@@ -32,20 +30,24 @@ assert_eq!(message.payload(), &OwnedDataValue::from(&json!({"name": "John"})));
 assert!(message.audit().is_empty());
 assert!(message.errors().is_empty());
 
-// The context is always `data`, `metadata` and `temp_data`, in that order.
+// The context always serializes as `data`, `metadata`, and `temp_data` in order.
 let wire = serde_json::to_string(&message).unwrap();
 assert!(wire.starts_with(r#"{"id":"order-7","payload":{"name":"John"},"context":{"data":{},"metadata":{},"temp_data":{}}"#));
 
-// A message reads back byte for byte.
+// Messages round-trip through JSON byte-for-byte.
 let read: Message = serde_json::from_str(&wire).unwrap();
 assert_eq!(read, message);
 ```
 
-The accessors are `id()`, `payload()`, `context()` and `context_mut()`,
-`audit()`, `errors()`, and `to_json()` for the message as a
-`serde_json::Value`.
+Main accessor methods on `Message`:
+- `id()`
+- `payload()`
+- `context()` and `context_mut()`
+- `audit()`
+- `errors()`
+- `to_json()` (converts the message to a `serde_json::Value`)
 
-The context is structured as:
+The evaluation `Context` always consists of three object roots:
 
 ```jsonc
 {
@@ -55,21 +57,19 @@ The context is structured as:
 }
 ```
 
-Those three roots are the whole context. Reading a message whose context
-holds a fourth key, or whose context is not an object, is refused, since
-every expression evaluates against this object and a fourth key would be
-readable by `{"var": …}`.
+Deserializing a `Message` whose `context` is not an object or contains any top-level key other than `data`, `metadata`, and `temp_data` returns an error.
 
 ## Creating Messages
 
-### From JSON
+### From JSON (`Message::from_json`)
 
 ```rust
 use dataflow_rs::Message;
 use serde_json::json;
 
-// `from_json` converts the payload. The context starts as three empty
-// roots; a `parse_json` task is what lands the payload in `data`.
+// `from_json` sets the message `payload`. The three context roots (`data`,
+// `metadata`, `temp_data`) start empty; use a `parse_json` task to copy the
+// payload into `data`.
 let message = Message::from_json(&json!({
     "name": "John",
     "email": "john@example.com"
@@ -78,11 +78,9 @@ let message = Message::from_json(&json!({
 #     r#"{"data":{},"metadata":{},"temp_data":{}}"#);
 ```
 
-### From an Owned Value
+### From an `OwnedDataValue` (`Message::new`)
 
-`Message::new` takes the payload as an `OwnedDataValue`, or as an
-`Arc<OwnedDataValue>`, which is shared rather than copied: messages built
-from one `Arc` hold one payload.
+`Message::new` accepts an `OwnedDataValue` or an `Arc<OwnedDataValue>`. Passing an `Arc<OwnedDataValue>` shares the payload across multiple messages without cloning:
 
 ```rust
 use dataflow_rs::Message;
@@ -96,10 +94,9 @@ let second = Message::new(Arc::clone(&payload));
 assert!(std::ptr::eq(first.payload(), second.payload()));
 ```
 
-### Seeding the Context
+### Pre-Populating `data` and `metadata` (`Message::from_parts`)
 
-`from_parts` seeds `data` and `metadata` directly, for a host that has
-already shaped them. A seed that is not an object is ignored.
+If your application has already parsed the input and wants to populate `data` and `metadata` directly before running workflows, use `Message::from_parts` (any non-object argument for `data` or `metadata` is ignored and replaced with `{}`):
 
 ```rust
 use dataflow_rs::Message;
@@ -117,11 +114,9 @@ assert_eq!(message.context().data(), &OwnedDataValue::from(&json!({"order": {"to
 assert_eq!(message.context().metadata(), &OwnedDataValue::from(&json!({"source": "api"})));
 ```
 
-### Writing the Context from Rust
+### Modifying the Context from Rust
 
-Workflows populate the context through the `parse_json`, `map` and other
-built-ins, and a host function writes through its `Ctx`, which records the
-audit-trail `Change` and lands the write when the call returns `Ok`:
+During a workflow run, built-in tasks like `parse_json` and `map` write to the context automatically, while custom host functions write through `Ctx::set` / `Ctx::emit`, which record audit-trail changes and commit writes when the call returns `Ok`:
 
 ```rust
 use dataflow_rs::datavalue::OwnedDataValue;
@@ -140,8 +135,7 @@ impl Function for Stamp {
 }
 ```
 
-Outside a run, `context_mut()` writes by the same path rules, with no audit
-entry:
+Outside of a run, you can read or modify the context directly via `message.context()` and `message.context_mut()` (direct mutations outside a run do not create audit entries):
 
 ```rust
 use dataflow_rs::datavalue::OwnedDataValue;
@@ -154,85 +148,64 @@ let path: Path = "data.order.total".parse()?;
 message.context_mut().set(&path, OwnedDataValue::from(1200))?;
 assert_eq!(message.context().get(&path), Some(&OwnedDataValue::from(1200)));
 
-// A root takes only an object.
+// Top-level roots (`data`, `metadata`, `temp_data`) must remain JSON objects.
 let root: Path = "data".parse()?;
 assert!(message.context_mut().set(&root, OwnedDataValue::from(1)).is_err());
 # Ok(()) }
 ```
 
-## Context Fields
+## Context Roots
 
-### data
+### `data`
 
-The main data payload, where your primary data lives and gets transformed.
-Workflows populate it via `parse_json` / `map` tasks; a host function reads
-it through `ctx.get(&path)` or by evaluating an expression with `ctx.eval`.
+The main business data container where your domain fields live and get transformed. Workflows typically populate `data` using `parse_json` and `map`, while custom host functions read it via `ctx.get(&path)` or `ctx.eval(&expr)`:
 
 ```rust
 # use dataflow_rs::Message;
 # fn _demo(message: &Message) -> dataflow_rs::Result<()> {
-// Inspecting a processed message, in a test or a handler of the result.
+// Read a field from `data` after a run completes.
 let total = message.context().get(&"data.order.total".parse()?);
 println!("total: {total:?}");
 # Ok(()) }
 ```
 
-### metadata
+### `metadata`
 
-Information about the message itself (not the data). Commonly used for:
+Holds metadata about the message and the current run (such as headers, source identifiers, and routing attributes).
 
-- Routing decisions (workflow conditions)
-- Source tracking
-- Timestamps
-- Message type classification
+Several paths under `metadata` are managed automatically by the engine—treat them as reserved:
 
-Several keys under `metadata` belong to the engine; treat them as reserved:
+- **`metadata.processed_at`** & **`metadata.engine_version`** — Stamped at the start of every run before any workflow executes. The engine reads the clock once at run start and uses that timestamp for `processed_at`, audit entries, and error records.
+- **`metadata.channel`** — Stamped at run start when `RunOptions::channel` is set.
+- **`metadata.progress`** — Updated after **every** executed task to `{"workflow_id": ..., "task_id": ..., "status_code": ...}`. Subsequent workflows and tasks can inspect `{"var": "metadata.progress.task_id"}` or `{"var": "metadata.progress.status_code"}` to branch on earlier steps. Avoid writing to `metadata.progress` yourself, as the engine overwrites it after each task.
+- **Configured `ErrorContext` path** — If [`ErrorContext`](./error-handling.md#branching-on-task-failures) is enabled on `EngineConfig`, the engine clears that path at run start and appends `{workflow_id, task_id, code, status}` whenever a task records an error.
 
-- **`metadata.processed_at`** and **`metadata.engine_version`**: stamped at
-  the start of every run, before any workflow. The run reads the clock once;
-  `processed_at`, every audit entry and every error record carry that reading
-- **`metadata.channel`**: the channel name, stamped only by a run with
-  `RunOptions::channel`
-- **`metadata.progress`**: rewritten after **every** task that runs, as
-  `{"workflow_id": …, "task_id": …, "status_code": …}`. Cross-workflow
-  chaining depends on it: a later workflow gates on
-  `{"var": "metadata.progress.task_id"}` or on `status_code` to decide whether
-  to run. Don't write this path yourself; the next task overwrites it
-- the path an [`ErrorContext`](./error-handling.md#branching-on-why-a-task-failed)
-  names, when one is configured: removed at run start and appended to after
-  each failing task
+### `temp_data`
 
-### temp_data
-
-Temporary storage for intermediate processing results, useful for values
-threaded between tasks within the same workflow. A loop's counter and a
-fan-out's element bindings live here too.
+Scratch space for intermediate values passed between tasks within a workflow. Loop counters (`loop`) and fan-out element bindings (`for_each`) also live under `temp_data`.
 
 ```json
 {"path": "temp_data.calculated_value", "logic": {"*": [{"var": "data.qty"}, 2]}}
 ```
 
-A later task reads it back with `{"var": "temp_data.calculated_value"}`.
+Subsequent tasks can read that value with `{"var": "temp_data.calculated_value"}`.
 
-`temp_data` ships on the wire like everything else in the context, so it is
-not private scratch space.
+> **Note:** `temp_data` is serialized as part of `Message` just like `data` and `metadata`. Do not store sensitive secrets in `temp_data`—use the engine's [Secrets](../advanced/secrets.md) store instead.
 
 ## Audit Trail
 
-The engine records one `AuditEntry` per task that ran:
+The engine records one `AuditEntry` in `message.audit()` for each executed task:
 
 | Field | Description |
 |---|---|
-| `workflow_id`, `task_id` | Where the entry came from |
-| `timestamp` | The run's one clock reading |
-| `status` | The task's status: `200` for `Ok`, the status it returned, `500` for an `Err`, `299` for a halt |
-| `changes` | The writes the task made, when changes are captured |
-| `loop_counter` | The sweep that produced the entry; absent outside a loop |
-| `element_index` | The fan-out element; absent outside a fan-out |
+| `workflow_id`, `task_id` | The workflow and task that produced the entry |
+| `timestamp` | RFC 3339 timestamp of the run |
+| `status` | HTTP-style status code (`200` for `Ok`, custom status code, `500` for `Err`, `299` for `Halt`) |
+| `changes` | List of context writes (`Change`) committed by the task (when `capture_changes` is enabled) |
+| `loop_counter` | Loop sweep index (present only inside a looping workflow) |
+| `element_index` | Fan-out element index (present only inside a `for_each` task) |
 
-Each `Change` carries the dotted `path` written, the `old_value` (`null` when
-the path was absent), the `new_value` (`null` for a removal) and `removed`,
-which tells a removal from a write of `null`.
+Each `Change` contains the dotted `path`, `old_value` (`null` if the field did not exist), `new_value` (`null` if removed), and `removed` (`true` when the field was deleted rather than set to `null`).
 
 ```rust
 # fn _demo(message: &dataflow_rs::Message) {
@@ -249,13 +222,11 @@ for entry in message.audit() {
 # }
 ```
 
-A task whose function returned `Outcome::Skip` leaves no entry; a task whose
-condition was false leaves none either.
+Tasks skipped because their condition evaluated to `false` or because their function returned `Outcome::Skip` do not add an audit entry.
 
-### Bounding the trail
+### Controlling Audit Trail Size
 
-Holding every write's old and new value for the whole run costs most in a
-[looping workflow](../advanced/loops.md). Two run options bound it:
+Capturing `old_value` and `new_value` snapshots for every write has a memory cost, especially in [looping workflows](../advanced/loops.md). You can bound or disable audit capture per run via `RunOptions`:
 
 ```rust
 # use dataflow_rs::{Engine, Message};
@@ -263,22 +234,19 @@ Holding every write's old and new value for the whole run costs most in a
 use dataflow_rs::run::{AuditMode, RunOptions};
 
 let opts = RunOptions::default()
-    // Keep the entries, with empty `changes` lists.
+    // Keep audit entries (workflow_id, task_id, status), but omit `changes` diffs.
     .capture_changes(false)
-    // Keep only the most recent 10 entries; `Off` keeps none.
+    // Retain only the 10 most recent audit entries (`AuditMode::Off` retains none).
     .audit(AuditMode::Last(10));
 engine.run_with(&mut message, &opts).await;
 # }
 ```
 
-The writes happen either way; only what is kept changes. `metadata.progress`
-does not depend on the audit trail.
+Disabling change capture or audit entries does not affect context updates or `metadata.progress`.
 
 ## Errors
 
-Every error recorded during processing is on `message.errors()`, as an
-`ErrorRecord`: its `code`, its `message`, the `workflow_id` and `task_id` it
-came from, its `timestamp`, and `element_index` for a fan-out element.
+Every error recorded during a run is appended to `message.errors()` as an `ErrorRecord` containing `code`, `message`, `workflow_id`, `task_id`, `timestamp`, `path` (for mapping errors), and `element_index` (for `for_each` errors):
 
 ```rust
 # fn _demo(message: &dataflow_rs::Message) {
@@ -294,37 +262,27 @@ for error in message.errors() {
 # }
 ```
 
-This is the one error list. The `Run` the engine returns says whether the run
-stopped early and why; see [Error Handling](./error-handling.md).
+To check whether an error stopped the run early, inspect `Run::status()`. See [Error Handling](./error-handling.md) for details.
 
-## JSONLogic Access
+## Accessing Fields in JSONLogic
 
-In workflow conditions and mappings, access message fields using JSONLogic:
+In workflow conditions, task conditions, and mappings, read context fields using `{"var": "..."}`:
 
 ```jsonc
-// Access data fields
+// Read from `data`
 {"var": "data.name"}
 {"var": "data.user.email"}
 
-// Access metadata
+// Read from `metadata`
 {"var": "metadata.type"}
 {"var": "metadata.source"}
 
-// Access temp_data
+// Read from `temp_data`
 {"var": "temp_data.intermediate_result"}
 ```
 
-`payload` is a separate field on `Message` and is **not** part of the context
-tree. In templating mode, `{"var": "payload.foo"}` resolves to `null`, so a
-condition reading `payload` evaluates to `false`. Run a `parse_json` (or
-`parse_xml`) task first to copy the payload under `data`, then read it with
-`{"var": "data.…"}`. `Compiler::check` flags any literal `var` rooted at
-`payload` as a `PAYLOAD_VAR` defect, and host functions read the payload
-through `Ctx::payload`.
-
-Secrets stay outside the context tree because the engine serializes and traces
-the context. Read secrets with `{"secret": "name"}` from the engine's secret
-store; see [Secrets](../advanced/secrets.md).
+- **`payload` is not in the JSONLogic context:** `{"var": "payload.foo"}` always evaluates to `null` (and `Compiler::check` flags it as a `PAYLOAD_VAR` defect). Copy the payload into `data` first using `parse_json` or `parse_xml` (custom host functions can also read the raw payload via `Ctx::payload`).
+- **Secrets are read via `{"secret": "name"}`:** Secrets live in an isolated store on `ExprEngine` so they are never serialized with the message. See [Secrets](../advanced/secrets.md).
 
 ## Try It
 
@@ -333,30 +291,26 @@ store; see [Secrets](../advanced/secrets.md).
 <div class="playground-widget" data-workflows='[{"id":"message_demo","name":"Message Demo","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"set_temp","name":"Set Temp Data","function":{"name":"map","input":{"mappings":[{"path":"temp_data.full_name","logic":{"cat":[{"var":"data.input.first_name"}," ",{"var":"data.input.last_name"}]}}]}}},{"id":"use_temp","name":"Use Temp Data","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"temp_data.full_name"},"!"]}}]}}}]}]' data-payload='{"first_name":"John","last_name":"Doe"}'>
 </div>
 
-The `set_temp` task stores an intermediate result in `temp_data`, and
-`use_temp` reads it back.
+Here, `set_temp` writes an intermediate string to `temp_data.full_name`, and `use_temp` reads it to build `data.greeting`.
 
 ## Best Practices
 
-1. **Separate Concerns**
-   - Use `data` for business data
-   - Use `metadata` for routing and workflow conditions
-   - Use `temp_data` for intermediate results
+1. **Separate Concerns Across Roots**
+   - Use `data` for domain and business fields.
+   - Use `metadata` for routing headers, environment info, and workflow conditions.
+   - Use `temp_data` for temporary intermediate calculations.
+2. **Do Not Overwrite Reserved `metadata` Keys**
+   - Leave `metadata.progress`, `metadata.processed_at`, `metadata.engine_version`, and `metadata.channel` to the engine.
+3. **Keep Context Roots as Objects**
+   - Writes directly to `data`, `metadata`, or `temp_data` must always be JSON objects.
 
-2. **Leave the Engine's Keys Alone**
-   - `metadata.progress`, `processed_at`, `engine_version` and `channel` are the engine's
+## Migrating from 3.x
 
-3. **Keep Roots as Objects**
-   - A write at `data`, `metadata` or `temp_data` takes only an object
+In 3.x, messages were constructed with `Message::from_value`, `Message::new`, or `Message::builder()` (where `capture_changes`, `audit_mode`, and `routing_bucket` lived on the message), `message.context` was a public field, and custom handlers wrote via `TaskContext::set`.
 
-4. **Check the Audit Trail**
-   - Use the audit trail for debugging and compliance
+In 4.0:
+- Use `Message::from_json`, `Message::new`, or `Message::from_parts`.
+- Configure `capture_changes`, `audit`, and `routing_bucket` per run on `RunOptions`.
+- Access the context via `message.context()` and `message.context_mut()`, and write inside host functions via `Ctx::set` or `Ctx::emit`.
 
-## From 3.x
-
-In 3.x a message was built with `Message::from_value`, `Message::new` or
-`Message::builder()`, whose `capture_changes`, `audit_mode` and
-`routing_bucket` are now `RunOptions`; `context` was a public field, now
-behind `context()` and `context_mut()`; and a handler wrote through
-`TaskContext::set`, now `Ctx::set`. See
-[Migrating from 3.x](../migration/from-3.md).
+See [Migrating from 3.x](../migration/from-3.md) for the complete guide.

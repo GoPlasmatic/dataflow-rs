@@ -1,27 +1,32 @@
 # Performance
 
-Dataflow-rs keeps per-message overhead low by moving every decision it can
-to the moment a workflow is compiled, and by touching the message's context
-as little as possible while a run is under way.
+Dataflow-rs minimizes per-message latency and allocations by moving parsing,
+type-checking, and expression compilation to build time, and by avoiding
+unnecessary copies of the message context at runtime.
 
-## Architecture for performance
+## Architectural Design
 
-### Everything compiles at build
+### 1. Ahead-of-Time Compilation
 
-A `Compiler` turns a definition into ops once. Every JSONLogic expression
-(conditions, `map` mappings, every field of every function's input) is
-compiled then, and an expression that reads nothing is evaluated once and
-kept as a constant, so a literal parameter costs nothing per message. Every
-function's config is compiled into its typed struct then too, so no JSON is
-parsed, no key looked up and no type checked while a message runs. A
-malformed definition is an issue at build, never a message-time error.
+When you build a workflow with `Compiler` (or `Engine::builder().build()`), the
+engine compiles the workflow definition into a flat sequence of execution
+operations:
+
+- Every JSONLogic expression—including conditions, `map` transformations, and
+  function input fields—is compiled once at build time.
+- Expressions that do not read from the message context or secrets are
+  constant-folded at build time and stored as ready-made constants, so literal
+  parameters have zero per-message evaluation cost.
+- Every function's `input` is compiled into its typed `FunctionConfig` struct at
+  build time, eliminating JSON parsing, key lookups, and type validation while
+  processing messages.
 
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
 use dataflow_rs::{Engine, Message};
 use serde_json::json;
 
-// Compiles every expression and config here, once.
+// Compiles all expressions and function configs once at build time:
 let engine = Engine::builder()
     .workflow_json(&json!({"id": "w", "tasks": [
         {"id": "t", "function": {"name": "map", "input": {"mappings": [
@@ -31,92 +36,86 @@ let engine = Engine::builder()
     .build()
     .unwrap();
 
-// Runs the compiled ops: no parsing, no compilation, no config lookup.
+// Executes pre-compiled operations with no runtime JSON parsing or compilation:
 let mut message = Message::from_json(&json!({}));
 let run = engine.run(&mut message).await;
 assert_eq!(run.matched(), 1);
 # });
 ```
 
-### One view of the context per run
+### 2. Single Shared Context View per Run
 
-The expression evaluator reads an arena-allocated view of the context, with
-the message's strings and keys borrowed and only its arrays' and objects'
-spines built. A run builds that view once and keeps it for its whole length:
-every write, a `map`'s or a host function's, is spliced into the view where
-it lands, and a checkpoint reclaims the arena's garbage when it is due. A
-task, a sweep of a loop and a host call all read the same view. Nothing
-converts the context per task, so a run's cost tracks what it reads and
-writes, not the bytes the message carries.
+The JSONLogic evaluator operates over an arena-allocated view of the message
+context that borrows string and key data directly from the `Message` and only
+allocates lightweight index spines for arrays and objects.
 
-### Host calls read the view and write an overlay
+The engine constructs this view once at the start of a run and maintains it
+across all workflows, tasks, and loop iterations:
+- Writes from `map` tasks and custom host functions are spliced directly into
+  the active view at the modified path.
+- Periodic arena checkpoints reclaim memory from overwritten subtrees during
+  long runs.
+- Because the context is never re-converted between tasks or loop iterations,
+  runtime cost scales with the data read and written rather than the total size
+  of the message.
 
-A host function's `Ctx` reads the run's view directly; no view is built per
-call. Its writes go to an overlay of the call's own, which the call reads
-back at once and which the engine replays into the run, write by write,
-once the call returns `Ok`. A fan-out binds each element beneath its call's
-overlay over the same view, so 100 elements over a 2 MiB context copy
-nothing. An `Interpolated` document renders by lending each hole's value
-where it already is and serializing the skeleton around it, building no
-tree.
+### 3. Zero-Copy Host Calls and Overlays
 
-### The recorder pays for what is watched
+When invoking a custom host function:
+- `Ctx` reads directly from the run's shared context view without building a new
+  view per call.
+- Writes made during the call are buffered in a lightweight per-call overlay that
+  subsequent reads in the same call see immediately, and are committed to the
+  message only if the call returns `Ok`.
+- In a `for_each` fan-out, each element call binds its element and index in its
+  own overlay on top of the shared context view—so fanning out across 100
+  elements on a 2 MiB context performs zero full-context copies.
+- `Interpolated` documents render by borrowing placeholder values in place and
+  serializing the surrounding template structure directly without allocating an
+  intermediate JSON tree.
 
-After every call the engine records the audit entry, the progress write and
-the error record. Anything beyond that is paid for only when something asks:
-no clock is read unless an observer asked for `Interest::TIMINGS` or a trace
-for timings, no trace step is built without a trace, no change is captured
-when neither the audit trail nor a trace will keep it, and a run with no
-observer, trace or error context takes the plain recorder, which costs the
-watched machinery one branch per call.
+### 4. Pay-Only-for-What-You-Use Observability
 
-## Benchmarking
+During normal execution, the engine only records what is enabled:
+- No system clock readings are taken per task unless an `Observer` requests
+  `Interest::TIMINGS` or `TraceOptions::timings(true)` is enabled.
+- No `TraceStep` records are built unless tracing is requested on `RunOptions`.
+- No `Change` snapshots (cloning old and new values) are allocated when both
+  change capture (`RunOptions::capture_changes(false)`) and tracing are off.
+- Runs without an observer, trace, or `ErrorContext` use a streamlined fast-path
+  recorder.
 
-The crate has thirteen benchmark examples. Always run them in release; a
-debug build measures nothing useful:
+## Running Benchmarks
+
+The repository includes thirteen benchmark examples covering macro workloads and
+targeted micro-benchmarks. Always run benchmarks with `--release`:
 
 ```bash
-cargo run --example realistic_benchmark --release        # ISO 20022 -> SwiftMT-style workload
-cargo run --example benchmark --release                  # Throughput + latency percentiles
-cargo run --example micro_cond_bench --release           # Condition eval, trivially-true folding
+cargo run --example realistic_benchmark --release        # ISO 20022 -> SwiftMT-style pipeline
+cargo run --example benchmark --release                  # Multi-threaded throughput and latency percentiles
+cargo run --example micro_cond_bench --release           # Condition evaluation and constant folding
 cargo run --example micro_aggregate_bench --release      # Aggregate-heavy (reduce/map) mappings
-cargo run --example micro_subtree_write_bench --release  # k map writes into one depth-2 subtree
-cargo run --example micro_multiworkflow_bench --release  # N chained workflows, one message
-cargo run --example async_handler_benchmark --release    # Marginal cost of one host function call
-cargo run --example map_performance_test --release       # 10 chained mappings across all 3 roots
-cargo run --example loop_scaling --release               # 1000-sweep append loop over a large context
-cargo run --example large_context_handler --release      # Five expression fields over a 2 MiB context, per call
+cargo run --example micro_subtree_write_bench --release  # k map writes into a depth-2 subtree
+cargo run --example micro_multiworkflow_bench --release  # N chained workflows over a single message
+cargo run --example async_handler_benchmark --release    # Marginal cost of a custom host function call
+cargo run --example map_performance_test --release       # 10 chained mappings across all 3 context roots
+cargo run --example loop_scaling --release               # 1,000-iteration append loop over a large context
+cargo run --example large_context_handler --release      # Evaluating 5 expression fields over a 2 MiB context
 cargo run --example fan_out --release                    # for_each over 100 elements on a 2 MiB context
-cargo run --example orion_connector --release            # A connector-shaped workload: documents, output, a layer
-cargo run --example observed_run --release               # The realistic workload with a counting observer
+cargo run --example orion_connector --release            # Connector workload: interpolated docs, outputs, and layers
+cargo run --example observed_run --release               # Realistic workload with a counting observer attached
 ```
 
-Each source file documents what it isolates and why in its header comment,
-and **each checks its result before it times anything**: a workload that
-silently does less than it says still reports a plausible number.
+Each benchmark verifies its output before timing begins. The macro benchmarks
+run on a multi-threaded Tokio runtime, while the `micro_*` benchmarks run a
+tight loop on a `current_thread` runtime to isolate sub-microsecond engine
+changes from thread-scheduling noise.
 
-The macro benchmarks run on a multi-threaded runtime and are dominated by
-scheduling, so they cannot resolve a sub-100 ns change per message. The
-`micro_*` benchmarks run a tight loop on a `current_thread` runtime instead,
-so the effect under test is a measurable fraction of the total.
-`micro_subtree_write_bench` and `micro_multiworkflow_bench` are regression
-guards: they assert that a property stays flat (per-write cost roughly linear
-in `k`; the three workflow layouts close together), and a sweep bending
-upward is the signal.
+### Comparing Changes with `bench/gate.py`
 
-Numbers vary by 2 to 3% run to run, with occasional transient P99 spikes.
-Compare the mean of several runs rather than single results.
-
-### The gate's method
-
-**Interleave the two sides of a comparison.** Running every "before"
-measurement and then every "after" one conflates the change with thermal
-drift: a measured 8.5% improvement on `realistic_benchmark` collapsed to
-0.2% once the same two binaries were alternated round-robin instead.
-
-`bench/gate.py` does this mechanically, comparing two builds: a base commit
-(A) against a candidate (B). Every gate benchmark prints one
-machine-readable line, `GATE {...}`, and the script reads only that:
+Running all "before" benchmarks followed by all "after" benchmarks can easily
+confound code changes with CPU thermal throttling. Instead, interleave runs
+round-robin using `bench/gate.py`:
 
 ```bash
 git switch --detach main && python3 bench/gate.py build --out /tmp/gate/base
@@ -124,57 +123,43 @@ git switch my-branch     && python3 bench/gate.py build --out /tmp/gate/candidat
 python3 bench/gate.py compare --a /tmp/gate/base --b /tmp/gate/candidate --rounds 5
 ```
 
-`build` builds the examples in release from a clean tree at `HEAD` and
-copies the thirteen binaries out of `target/`, so a rebuild cannot clobber
-one. `compare` runs
-the two builds round-robin for the rounds asked plus one, alternating the
-order within each pair, discards the first round as cold, and judges each
-metric on the **median of its per-round ratios**, B over A, oriented so a
-ratio above 1 means B is worse. The noise is the larger of 3% and half the
-inter-quartile range of those ratios: B is WORSE above `1 + noise`, better
-below `1 - noise`, and "not slower" between. It also reports the
-instructions retired by each binary, which separate the work the code does
-from the load on the machine; they move with code layout too, so attribute
-a change to one item only with a same-binary toggle.
+- `build` compiles all thirteen benchmark binaries in `--release` mode and copies
+  them to the output directory.
+- `compare` runs the base (`A`) and candidate (`B`) binaries round-robin (with a
+  warmup round discarded first) and compares the median per-round ratio (`B / A`),
+  where values below `1.0` mean `B` is faster.
 
-### What 4.0 measured against 3.15
+### 4.0 vs. 3.15 Benchmark Highlights
 
-Before 4.0's release, against 3.15, five rounds after a cold one, on a machine
-with a busy container stack: 16 rows faster, 25 better, 6 not slower and 2
-WORSE of 49 judged rows. The two WORSE rows were
-`micro_subtree_write_bench`'s `k=100` (1.039) and `scaling` (1.104), with
-instructions retired at 0.996; at seven rounds they read 1.006 and 1.026,
-not slower. Where 3.15 paid per byte the message carried, 4.0 pays per
-write:
+Because 4.0 maintains a single context view and splices writes in place rather
+than re-converting the entire context for each synchronous task stretch or
+`for_each` element, workloads with large contexts or loops see dramatic speedups
+compared to 3.15:
 
-| Benchmark | Metric | 4.0 over 3.15 |
+| Benchmark | Metric | 4.0 / 3.15 Ratio |
 |---|---|---|
-| `realistic_benchmark` | `mean` latency | 0.76 |
-| `realistic_benchmark` | `p99` latency | 0.27 |
-| `benchmark` | `mean` latency | 0.51 |
-| `micro_multiworkflow_bench` | `grouped.ns_per_msg` | 0.86 |
-| `loop_scaling` | every row, 250 and 1,000 sweeps | 0.01 to 0.03 |
-| `large_context_handler` | `per_field.mean` | 0.001 |
-| `fan_out` | `per_element.mean` | 0.002 |
-| `orion_connector` | `connector.mean` | 0.45 |
+| `realistic_benchmark` | `mean` latency | `0.76` (24% faster) |
+| `realistic_benchmark` | `p99` latency | `0.27` (3.7x faster) |
+| `benchmark` | `mean` latency | `0.51` (2x faster) |
+| `micro_multiworkflow_bench` | `grouped.ns_per_msg` | `0.86` (14% faster) |
+| `loop_scaling` | 250 and 1,000 iterations | `0.01`–`0.03` (30x–100x faster) |
+| `large_context_handler` | `per_field.mean` | `0.001` (~1,000x faster) |
+| `fan_out` | `per_element.mean` | `0.002` (~500x faster) |
+| `orion_connector` | `connector.mean` | `0.45` (2.2x faster) |
 
-`loop_scaling` at about 2% of 3.15's time, `fan_out` and
-`large_context_handler` at under 1%, are the one view and the overlay: 3.15
-converted the whole context into the arena once per sync stretch and once
-per fan-out element, and 4.0 does neither.
+## Optimization Tips
 
-## Optimization tips
+### 1. Prefer Literal Parameters When Values Are Static
 
-### 1. Let literals fold
+Any config field or expression that does not read from the message context is
+constant-folded at compile time and never evaluated per message. Prefer plain
+literals like `"timeout_ms": 5000` over dynamic expressions whenever a value is
+fixed.
 
-A parameter written as a literal is compiled once and never evaluated. Only
-a parameter that reads the message does per-message work, so prefer
-`"timeout_ms": 5000` to an expression that computes the same constant.
+### 2. Gate Expensive Steps with Conditions
 
-### 2. Use conditions
-
-Skip work with conditions, on a task, a group or the workflow. A condition
-that is literally `true` compiles to nothing at all.
+Use workflow, group, and task `condition` fields to skip unnecessary work early.
+A literal `true` condition compiles to a no-op with zero runtime cost.
 
 ```json
 {
@@ -184,11 +169,11 @@ that is literally `true` compiles to nothing at all.
 }
 ```
 
-### 3. Stage intermediate results in `temp_data`
+### 3. Stage Shared Intermediate Values in `temp_data`
 
-Repeated pure subexpressions *within one mapping* are evaluated once by the
-evaluator. Staging in `temp_data` still pays off when the same result is
-reused across different mappings or tasks:
+While the expression evaluator automatically deduplicates repeated pure
+subexpressions *within a single mapping*, staging an expensive calculation in
+`temp_data` avoids recomputing it across multiple mappings or tasks:
 
 ```json
 {
@@ -200,13 +185,15 @@ reused across different mappings or tasks:
 }
 ```
 
-### 4. Turn change capture off when nothing reads it
+### 4. Disable `capture_changes` When Old/New Snapshots Aren't Needed
 
-With change capture on (the default), every write copies its old and new
-value into the audit entry: deep copies that dominate the profile in
-mapping-heavy workloads and grow with every sweep of a loop. If you never
-read `AuditEntry::changes`, turn it off per run, and drop the trail
-altogether when nothing reads the entries either:
+When `capture_changes` is enabled (the default), every context write clones both
+the old and new value into `AuditEntry::changes`. In mapping-heavy pipelines and
+loops, those deep clones are often the largest part of per-message cost.
+
+If your application does not inspect `AuditEntry::changes`, disable change
+capture (and optionally disable the audit trail altogether if you don't read
+`message.audit()`):
 
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -229,36 +216,34 @@ assert!(message.audit().is_empty());
 # });
 ```
 
-This is the single largest tuning lever in the hot path. See
-[Audit Trails](audit-trails.md) for what you give up, and
-[Memory in long loops](loops.md#memory-in-long-loops) for why it matters
-more in a loop.
+See [Audit Trails](./audit-trails.md) and
+[Memory in Long Loops](./loops.md#memory-in-long-loops) for details.
 
-### 5. Observe rather than trace
+### 5. Use `Observer` for Production Metrics Instead of Full Traces
 
-A trace records every change of every step and copies the initial context;
-an observer copies out what it keeps and nothing else. For counters and
-timings, attach an `Observer`; ask for a trace when you need the context
-after a step. Neither reads the clock unless asked for timings.
+An execution `Trace` clones the initial context and records every step's changes
+for offline replay, whereas an `Observer` runs inline with minimal overhead. Use
+`Observer` for production counters, histograms, and timings, and reserve
+`TraceOptions` for debugging and diagnostics.
 
-### 6. Filtered log tasks are free
+### 6. Leave Diagnostic `log` Tasks in Workflows
 
-`log` tasks check whether their level is enabled for the `dataflow::log`
-target *before* evaluating any JSONLogic or formatting fields. With
-production filtering like `RUST_LOG=dataflow::log=warn`, `debug` and `info`
-log tasks short-circuit at near-zero cost, so you can leave diagnostic
-logging in production workflows without paying for it.
+`log` tasks check `tracing::enabled!` for the `dataflow::log` target *before*
+evaluating their `message` or `fields` expressions. When `RUST_LOG=dataflow::log=warn`
+is set in production, `debug` and `info` log tasks short-circuit immediately at
+near-zero cost.
 
-### 7. Set a deadline only when you need one
+### 7. Only Set Deadlines When Needed
 
-A run with a deadline or a cancellation token checks it at every host call,
-fan-out element and sweep, and every 64th op, and natively races each host
-call against it on a Tokio timer. A run without either skips all of that.
+Configuring a `deadline` or `cancel` token on `RunOptions` adds periodic check
+points and wraps host function calls in a timer race. Omit them on runs that do
+not require per-run timeouts or cancellation.
 
-## Concurrent processing
+## Concurrent Message Processing
 
-`Engine` is `Clone`, `Send` and `Sync`, and a clone runs the same program.
-Process messages concurrently by spawning one task per message:
+`Engine` is `Clone`, `Send`, and `Sync`. Cloning an `Engine` simply clones an
+`Arc` to the compiled `Program`, so you can process messages concurrently across
+Tokio tasks with zero lock contention:
 
 ```rust
 # tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap().block_on(async {
@@ -289,30 +274,19 @@ for handle in handles {
 # });
 ```
 
-Each run owns its message and its arena; nothing is shared between runs but
-the compiled program, behind an `Arc`. A reload (`Engine::with_program`)
-gives a new engine running the new program while runs in flight on the old
-one finish undisturbed.
+Each `engine.run` call manages its own message and evaluation arena. When hot-reloading
+workflows via `engine.with_program(new_program)`, the new `Engine` serves new
+runs while any in-flight runs on clones of the previous `Engine` complete
+undisturbed.
 
-## Memory
+## Production Checklist
 
-A run's arena holds the view's spines and each write's spliced value, and a
-checkpoint reclaims what the splices left behind, so the arena stays within
-a small multiple of the live view however long a loop runs. The context's
-strings and keys are borrowed from the message, not copied.
-
-The audit trail is the other half of a run's memory, and it is the host's
-choice: see tip 4. A trace adds a copy of the initial context and of every
-change, bounded by `TraceOptions::max_bytes` when a host asks.
-
-## Production recommendations
-
-1. **Build with `--release`.** Debug builds are many times slower.
-2. **Compile once, run many.** Build the engine at startup; a definition
-   that changes goes through `engine.compiler()` and `with_program`, not a
-   rebuild per message.
-3. **Monitor with an observer.** Counters and timings per task and per
-   workflow, with `Interest::TIMINGS` only where you read them.
-4. **Profile with the micro benchmarks** before changing the engine, and
-   compare interleaved.
-5. **Scale horizontally.** The engine holds no state between runs.
+1. **Always compile with `--release`.**
+2. **Build `Engine` once and reuse it:** Use `engine.compiler()` and
+   `engine.with_program()` for hot reloads rather than rebuilding from scratch
+   per message.
+3. **Disable `capture_changes` (or `AuditMode`)** on high-throughput pipelines
+   that don't read audit change diffs.
+4. **Use `Observer` for telemetry,** enabling `Interest::TIMINGS` only when you
+   record task durations.
+5. **Benchmark changes with interleaved runs** via `bench/gate.py`.

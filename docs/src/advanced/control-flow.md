@@ -1,31 +1,33 @@
 # Control Flow
 
-A workflow's `tasks` array holds **steps**. A step is either:
+A workflow's `tasks` array is a sequence of **steps**. Each step is either:
 
-- a **task**: an object with a `function` key;
-- a **group**: an object with a `tasks` key, holding its own nested steps.
+- a **task**: an object with a `function` key that executes a built-in or custom
+  function
+- a **group**: an object with a `tasks` key that holds a nested list of steps
 
-Both accept `condition` and `terminal`. A task additionally carries two
-**policies**, `on_failure` and `on_rejection`, which say what its outcome
-does. Between them that gives the shapes every procedural language has:
+Both tasks and groups accept `condition` and `terminal`. Tasks also support two
+outcome **policies**—`on_failure` and `on_rejection`—that control what happens
+after the task finishes. Together, these fields give you familiar structured
+control-flow patterns:
 
-| Step | Reads as |
+| Step Configuration | Equivalent Control Flow |
 |---|---|
-| group, no `terminal` | `if (…) { … }` |
-| task with `terminal: true` | early `return` |
-| group with `terminal: true` | `if (…) { …; return; }` |
-| task with `on_rejection: "halt"` | `if (rejected) return;` |
-| task with `on_failure: "halt"` | `if (failed) return;` |
-| task with `on_failure: "continue"` | `try { … } catch { log }` |
+| Group without `terminal` | `if (…) { … }` |
+| Task with `terminal: true` | Early `return` |
+| Group with `terminal: true` | `if (…) { …; return; }` |
+| Task with `on_rejection: "halt"` | `if (rejected) return;` |
+| Task with `on_failure: "halt"` | `if (failed) return;` |
+| Task with `on_failure: "continue"` | `try { … } catch { log }` |
 
-Every field defaults to the plain behaviour: `terminal` to `false`,
-`on_failure` to `"fail"`, `on_rejection` to `"continue"`, and a step with no
-nested `tasks` is exactly the task it always was.
+All control-flow fields have sensible defaults: `terminal` defaults to `false`,
+`on_failure` defaults to `"fail"`, and `on_rejection` defaults to `"continue"`.
 
-## The problem they solve
+## Why Structured Control Flow Matters
 
-Without them, every task after a branch has to restate that the branch did
-*not* fire, so conditions grow with position:
+Without early exits (`terminal`), every task following a conditional branch has
+to repeat the negation of that branch's condition, causing conditions to grow
+more complex with each step:
 
 ```json
 {
@@ -50,7 +52,8 @@ Without them, every task after a branch has to restate that the branch did
 }
 ```
 
-With `terminal`, each guard states only its own reason:
+With `terminal: true`, guard clauses exit the workflow as soon as they run, so
+subsequent steps don't need to re-check earlier conditions:
 
 ```json
 {
@@ -72,30 +75,31 @@ With `terminal`, each guard states only its own reason:
 }
 ```
 
-## `terminal`
+## Early Exit with `terminal`
 
-`terminal: true` ends the workflow once the task has run.
+Setting `terminal: true` stops the current workflow after the task or group
+executes.
 
-It is a statement about **position** ("nothing after this runs"), not about
-outcome:
+`terminal` is based on **whether the step ran**, not whether it succeeded or
+rejected:
 
-| Situation | Halts? |
+| Scenario | Halts the Workflow? |
 |---|---|
-| The task ran and succeeded | yes |
-| Its `condition` was false | no; it never ran |
-| It returned `Outcome::Skip` | no |
-| It returned a `4xx`, `on_rejection: "continue"` | yes |
-| It failed, `on_failure: "continue"` | **yes**; the failure is still recorded |
-| It failed, `on_failure: "fail"` | the failure propagates, as always |
+| The task ran and succeeded | Yes |
+| The task's `condition` evaluated to `false` | No (the task did not run) |
+| The task returned `Outcome::Skip` | No |
+| The task returned a `4xx` status with `on_rejection: "continue"` | Yes |
+| The task failed with `on_failure: "continue"` | **Yes** (and the failure is still recorded) |
+| The task failed with `on_failure: "fail"` | The failure propagates as usual |
 
-Halting stops **this workflow only**. Later workflows on the same engine
-still process the message, exactly as with a `filter` task's
-`on_reject: "halt"`. Inside a workflow carrying a [`loop`](./loops.md) it
-breaks the whole loop, not one sweep.
+Halting a workflow stops **only the current workflow**. Any subsequent workflows
+in the engine still process the message, just like a `filter` task with
+`on_reject: "halt"`. Inside a workflow with a [`loop`](./loops.md), `terminal`
+exits the entire loop rather than just the current iteration.
 
-The audit entry keeps the task's **own** status (`200`, `404`, whatever it
-returned) rather than the `299` a `filter` halt or an `Outcome::Halt`
-records. The task did its job; only the position is special.
+When a `terminal` task halts a workflow, its audit entry records the task's
+**actual status code** (such as `200` or `404`) rather than the `299` status
+used by `filter` halts or `Outcome::Halt`.
 
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -123,49 +127,58 @@ let run = engine.run(&mut message).await;
 let login = run.workflows().next().unwrap();
 assert_eq!(login.exit, Some(WorkflowExit::Halted));
 assert_eq!(message.to_json()["context"]["data"], json!({"status": 404}));
-// The entry keeps the task's own status, not a halt's 299.
+// The audit entry preserves the task's own status (200), not 299.
 assert_eq!(message.audit().len(), 1);
 assert_eq!(message.audit()[0].status, 200);
 # });
 ```
 
-For the *outcome* axis (halt only if the task failed or was rejected), use
-the policies.
+If you want to halt a workflow based on the task's *outcome* (for example, halt
+only when a task fails or is rejected), use `on_failure` and `on_rejection`
+instead.
 
-## Policies
+## Outcome Policies (`on_failure` and `on_rejection`)
 
-A call ends one of four ways, and two policies say what each does:
+Every task execution finishes in one of four ways, governed by two policies:
 
-| The task's outcome | Means | Governed by |
+| Task Outcome | Meaning | Governed By |
 |---|---|---|
-| `Ok`, or a status below `400` | success | nothing: the next task runs |
-| a status `400` to `499` | **rejection**: the input was refused | `on_rejection` |
-| a status of `500` or more, or an `Err` | **failure**: the task could not do its job | `on_failure` |
-| `Skip` | nothing happened | nothing: no entry, no progress, the next task runs |
+| `Ok`, or status `< 400` | **Success** | Continues to the next task |
+| Status `400..=499` | **Rejection** (input did not pass a check) | `on_rejection` |
+| Status `>= 500`, or `Err` | **Failure** (task could not complete its work) | `on_failure` |
+| `Skip` | **No-op** | Continues to the next task (no audit entry or progress update) |
 
-`on_rejection` is `"continue"` (the default: the status is recorded and the
-next task runs) or `"halt"` (the workflow stops). `on_failure` is `"fail"`
-(the default: the failure passes to the workflow), `"halt"` (the workflow
-stops, and the run goes on) or `"continue"` (the failure is recorded and the
-next task runs).
+- **`on_rejection`** accepts:
+  - `"continue"` (default): Records the `4xx` status and continues to the next
+    task.
+  - `"halt"`: Stops the current workflow.
+- **`on_failure`** accepts:
+  - `"fail"` (default): Propagates the failure to the workflow level.
+  - `"halt"`: Stops the current workflow and allows the engine run to continue
+    to the next workflow.
+  - `"continue"`: Records the failure and continues to the next task.
 
-A failure that reaches the workflow meets the workflow's own `on_failure`:
-`"fail"` (the default) stops the run, which ends `Stopped` with the error,
-and `"continue"` records it and goes on to the next workflow, or the next
-sweep of a loop.
+When a task failure propagates to the workflow level, it is handled by the
+workflow's own `on_failure` policy:
+- `"fail"` (default): Stops the entire engine run with status `Stopped` and
+  returns the error.
+- `"continue"`: Records the failure and moves on to the next workflow (or the
+  next iteration of a loop).
 
-Whatever the policy, the outcome is recorded first: a `5xx` records
-`TASK_STATUS_ERROR` and an `Err` its own code on `message.errors()`, and
-the audit entry carries the status (`500` for an `Err`). `terminal` is
-applied after the policies, and only upgrades "go on to the next task" into
-a halt, so a terminal task that fails under `on_failure: "fail"` still
-fails.
+Regardless of the policy, the engine always records the task's outcome first: a
+`5xx` status adds a `TASK_STATUS_ERROR` record to `message.errors()`, an `Err`
+adds a record with the error's code, and the audit entry logs the status (`500`
+for an `Err`). `terminal` is evaluated *after* outcome policies and only turns
+"continue to the next task" into a workflow halt—so a terminal task that fails
+under `on_failure: "fail"` still fails the workflow.
 
-### Rejecting with `validation`
+### Halting on Validation Rejections
 
-A failing `validation` rule returns `400`, a rejection, and rejections
-continue by default: plenty of workflows validate to record errors rather
-than to gate. To make the assertion reject, say so:
+When a `validation` rule fails, the task returns status `400` (a rejection).
+Because `on_rejection` defaults to `"continue"`, workflows can run multiple
+validation tasks to collect all errors before deciding what to do. If you want a
+failed validation task to stop the workflow immediately, set
+`on_rejection: "halt"`:
 
 ```json
 {
@@ -215,18 +228,19 @@ assert_eq!(matching.to_json()["context"]["data"]["exchanged"], json!(true));
 # });
 ```
 
-A `validation` whose rejection nothing acts on is reported by
-`Compiler::check` as `UNGUARDED_VALIDATION`, an advisory at the task's
-`on_rejection`: the key that fixes it.
+If a `validation` task leaves `on_rejection` at `"continue"` and nothing later
+in the workflow checks for errors, `Compiler::check` reports an
+`UNGUARDED_VALIDATION` advisory pointing at the task's `on_rejection` field.
 
-**Halting is not a security control.** Later workflows still process the
-message, so to reject a message outright return an `Err` from a host
-function under `on_failure: "fail"`, or gate the following workflow on the
-[error-context path](../core-concepts/error-handling.md).
+**Note:** Halting a workflow is not a global security gate across multiple
+workflows. Because subsequent workflows in the engine still process the message,
+either return an `Err` from a host function with `on_failure: "fail"` to stop
+the entire run, or check the [error-context path](../core-concepts/error-handling.md)
+in downstream workflows.
 
-## Groups
+## Task Groups
 
-A group states a condition once for a contiguous run of tasks:
+A **group** applies a single condition to a contiguous sequence of steps:
 
 ```json
 {
@@ -239,21 +253,24 @@ A group states a condition once for a contiguous run of tasks:
 }
 ```
 
-| Field | Required | Default | Meaning |
+| Field | Required | Default | Description |
 |---|---|---|---|
-| `id` | **yes** | none | Shares the task id namespace: a group cannot reuse a task's id. |
-| `tasks` | **yes** | none | The nested steps. Must not be empty. |
-| `condition` | no | `true` | Gates the whole span. |
-| `terminal` | no | `false` | Ends the workflow once the group completes. |
-| `name`, `description`, `ext` | no | none | For traces and tooling; `ext` is kept verbatim and never read. |
+| `id` | **Yes** | None | Unique step ID within the workflow (shares the same ID namespace as tasks). |
+| `tasks` | **Yes** | None | Non-empty array of nested tasks or groups. |
+| `condition` | No | `true` | JSONLogic condition that gates the entire group. |
+| `terminal` | No | `false` | If `true`, halts the workflow once the group finishes executing. |
+| `name`, `description`, `ext` | No | None | Metadata for traces and UI tools (`ext` is preserved verbatim). |
 
-A group has no outcome of its own, so it takes no policy and no `for_each`:
-`for_each` on a group is refused as `INVALID_FOR_EACH`. Put either on the
-task that can fail or fan out.
+Because a group does not execute a function of its own, it does not accept
+`on_failure`, `on_rejection`, or `for_each` (setting `for_each` on a group is
+rejected with `INVALID_FOR_EACH`). Place those fields on the individual tasks
+inside the group.
 
-**The condition is evaluated once, on entry.** A false result skips the whole
-span without evaluating the members' own conditions. This matters when a task
-inside the group writes to what the condition reads:
+**A group's condition is evaluated once when entering the group.** If the
+condition is `false`, the entire group is skipped without evaluating the
+conditions of its inner steps. If the condition is `true`, the engine enters the
+group and runs its steps to completion—even if an earlier task inside the group
+modifies the field that the group's condition checked:
 
 ```json
 {
@@ -270,22 +287,20 @@ inside the group writes to what the condition reads:
 }
 ```
 
-`take` empties `temp_data.queue`, but `process` still runs: the block was
-entered, and a block runs to its end. Repeating the condition on both tasks
-instead would silently skip `process`.
+Here, `take` empties `temp_data.queue`, and `process` still runs because the
+`drain` group was already entered. (If you had duplicated the condition on both
+tasks instead of using a group, `process` would have been skipped.)
 
-Groups nest, up to `def::MAX_GROUP_DEPTH` (8) levels. A group whose
-condition is false skips its whole subtree; an inner false condition skips
-only the inner span.
+Groups can be nested up to `def::MAX_GROUP_DEPTH` (8) levels deep. Execution
+traces remain task-granular: when a group is skipped, the trace records a
+`skipped` step for each task inside the group.
 
-Traces stay task-granular: a skipped group records one `skipped` step per
-member task, not a group-level step.
+## Combining Groups and `terminal`
 
-## Choosing between them
-
-`terminal` removes the **negations** of earlier branches. Groups remove the
-repetition of a **positive** condition across the tasks that make up one branch.
-They compose: a terminal group is a guard clause with a multi-task body:
+Use `terminal` to avoid repeating **negated** conditions after an early-exit
+branch, and use groups to avoid repeating a **positive** condition across
+multiple tasks in the same branch. You can combine both to create a multi-step
+guard clause:
 
 ```json
 {
@@ -302,16 +317,15 @@ They compose: a terminal group is a guard clause with a multi-task body:
 }
 ```
 
-## Compared with `filter`
+## `terminal` vs. `filter`
 
-A [`filter`](../built-in-functions/filter.md) task with `on_reject: "halt"`
-also stops a workflow, and still has its place: it is a gate that decides
-whether the *rest* of the pipeline should run at all, and it can
-`"skip"` instead of halting.
+A [`filter`](../built-in-functions/filter.md) task with `on_reject: "halt"` can
+also stop a workflow. Use `filter` when you want a standalone gate that decides
+whether the rest of the workflow (or a single task via `"skip"`) should proceed.
 
-`terminal` is the better fit for a branch that has already done its work,
-because the alternative is two tasks per exit whose conditions are hand-written
-negations of each other:
+Use `terminal: true` when a branch performs work (such as setting a `404`
+response) and then needs to exit. Without `terminal`, you would need two
+separate tasks with opposite conditions that must be kept in sync manually:
 
 ```jsonc
 { "id": "respond_404",
@@ -323,16 +337,17 @@ negations of each other:
       "on_reject": "halt" } } }
 ```
 
-Nothing keeps those two conditions in sync. `terminal: true` on the first task
-says the same thing once.
+Setting `"terminal": true` on `respond_404` expresses the same intent in a
+single step.
 
-## Inspecting the authored shape
+## Walking the Authored Step Tree
 
-`def::parse` reads a definition into a `WorkflowDef` whose `tasks` keep the
-authored tree: a `StepDef::Task` or a `StepDef::Group` with its own `tasks`.
-A tool that validates, lints or renders definitions walks that tree with
-`WorkflowDef::walk`, which yields every step with the path the author typed
-and its kind, groups before their members, `loop.setup` first:
+`def::parse` parses a workflow definition into a `WorkflowDef` whose `tasks`
+preserve the nested structure of `StepDef::Task` and `StepDef::Group` nodes.
+Tools that validate, lint, or visualize workflows can traverse this tree with
+`WorkflowDef::walk()`, which yields each step along with its authored JSON path
+and `StepKind` (visiting `loop.setup` steps first, and each group before its
+children):
 
 ```rust
 use dataflow_rs::def::{MAX_GROUP_DEPTH, ParseOptions, parse};
@@ -362,43 +377,41 @@ assert_eq!(steps, [
 assert_eq!(MAX_GROUP_DEPTH, 8);
 ```
 
-Filtering to `StepKind::Task` (and `StepKind::Setup`, for steps under
-`loop.setup`) gives exactly the tasks the engine will run, in the order it
-runs them. The rules are the engine's own: `parse` is the linter, so an
-empty group, a group too deep or a duplicate id is an issue in
-`parsed.issues` at the path it yields, and `MAX_GROUP_DEPTH` is the limit
-the parser enforces. See
-[Authoring-Time Validation](./authoring-validation.md).
+Filtering `walk()` to `StepKind::Task` (and `StepKind::Setup` for loop setup
+steps) gives the exact sequence of tasks the engine executes. See
+[Authoring-Time Validation](./authoring-validation.md) for more details on
+structural validation.
 
-## Coming from 3.x
+## Migrating from 3.x
 
-3.x spelt the policies as two flags, `continue_on_error` (a bool on a task
-or a workflow) and `halt_on` (`"never"` or `"failure"` on a task). The
-compat reader, on by default in `def::parse`, reads them and rewrites each
-into the 4.0 policies, reporting a `V3_SPELLING` advisory at the 3.x key:
+In 3.x, failure and rejection behavior was configured using `continue_on_error`
+(a boolean on tasks and workflows) and `halt_on` (`"never"` or `"failure"` on
+tasks). By default, `def::parse` enables the 3.x compatibility reader, which
+automatically translates these fields into 4.0 policies and emits a
+`V3_SPELLING` advisory at the 3.x key:
 
-| Where | 3.x | 4.0 |
+| Scope | 3.x Configuration | 4.0 Equivalent |
 |---|---|---|
 | Workflow | `continue_on_error: true` | `on_failure: "continue"` |
 | Workflow | `continue_on_error: false` | `on_failure: "fail"` |
 | Task | `continue_on_error: true` | `on_failure: "continue"`, `on_rejection: "continue"` |
 | Task | `halt_on: "failure"` | `on_failure: "fail"`, `on_rejection: "halt"` |
-| Task | both | `on_failure: "halt"`, `on_rejection: "halt"` |
-| Task | neither, or `halt_on: "never"` | the defaults |
+| Task | Both `continue_on_error: true` and `halt_on: "failure"` | `on_failure: "halt"`, `on_rejection: "halt"` |
+| Task | Neither, or `halt_on: "never"` | Default policies (`on_failure: "fail"`, `on_rejection: "continue"`) |
 
-A 3.x flag beside a 4.0 policy on one node is refused (`MIXED_SPELLING` at
-the 3.x key): the two flags make one policy, and a mix would be a guess at
-how the author meant them to combine. A group's `continue_on_error`, which
-3.x reported and never honoured, moves into the group's `ext` and is
-reported as `GROUP_CONTINUE_ON_ERROR`; a group's `halt_on` is refused as
-`INVALID_HALT_ON`, as 3.x refused it. With the reader off
-(`ParseOptions::default().compat(false)`) the 3.x keys are unknown keys and
-are refused.
+- Combining a 3.x flag (`continue_on_error` or `halt_on`) with a 4.0 policy
+  (`on_failure` or `on_rejection`) on the same node is rejected with
+  `MIXED_SPELLING`.
+- Setting `continue_on_error` on a group (which 3.x ignored) moves the field
+  into the group's `ext` map and emits a `GROUP_CONTINUE_ON_ERROR` advisory.
+- Setting `halt_on` on a group is rejected with `INVALID_HALT_ON`.
+- When the compatibility reader is disabled (`ParseOptions::default().compat(false)`),
+  3.x keys are treated as unknown keys and rejected.
 
-`compat::migrate_v3` rewrites a stored definition into the 4.0 spelling
-once, so it reads back with the reader off. The definition it writes leaves
-every default out, so a policy at its default (`on_failure: "fail"` here)
-has no key:
+To permanently upgrade stored workflow JSON to the 4.0 format, use
+`compat::migrate_v3`. It rewrites 3.x fields into 4.0 policies (omitting keys
+that match their default values) so the workflow can be parsed with
+`.compat(false)`:
 
 ```rust
 use dataflow_rs::compat::migrate_v3;
@@ -421,4 +434,5 @@ assert_eq!(
 );
 ```
 
-See [Migrating from 3.x](../migration/from-3.md).
+See [Migrating from 3.x](../migration/from-3.md) for the complete migration
+guide.

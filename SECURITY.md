@@ -2,15 +2,15 @@
 
 ## Supported Versions
 
-Maintainers issue security fixes for the latest `4.x` minor release. Older
-releases do not receive backports; upgrade to the current release.
+We provide security updates for the latest `4.x` minor release. Older releases
+do not receive backports—please upgrade to the latest release.
 
 | Version              | Supported |
 |----------------------|-----------|
 | Latest 4.x minor     | Yes       |
 | < 4.0                | No        |
 
-This policy covers all four published artifacts, which share a version number:
+This policy covers all four published packages, which share a version number:
 
 - [`dataflow-rs`](https://crates.io/crates/dataflow-rs) (crates.io)
 - [`dataflow-rs-derive`](https://crates.io/crates/dataflow-rs-derive) (crates.io)
@@ -19,66 +19,65 @@ This policy covers all four published artifacts, which share a version number:
 
 ## Reporting a Vulnerability
 
-**Do not open a public issue for security reports.**
+**Please do not open a public GitHub issue for security vulnerabilities.**
 
-Use GitHub's private vulnerability reporting:
+Instead, use GitHub's private vulnerability reporting:
 [Report a vulnerability](https://github.com/GoPlasmatic/dataflow-rs/security/advisories/new).
-This opens a private thread visible only to the maintainers.
+This opens a private discussion visible only to the maintainers.
 
-If you cannot use GitHub advisories, email **shankar@goplasmatic.io** with
-`[SECURITY] dataflow-rs` in the subject line.
+If you are unable to use GitHub advisories, email **shankar@goplasmatic.io**
+with `[SECURITY] dataflow-rs` in the subject line.
 
-Include:
+Please include:
 
-- The affected version and artifact (crate, wasm, or UI)
-- A description of the issue and its impact
-- Steps to reproduce, with a minimal workflow JSON or code sample
-- Any known mitigations
+- The affected version and package (`dataflow-rs`, `dataflow-wasm`, or `dataflow-ui`)
+- A clear description of the vulnerability and its potential impact
+- Steps to reproduce, ideally with a minimal workflow JSON or code snippet
+- Any known workarounds or mitigations
 
 ### Response Timeline
 
-- **Acknowledgement** within 3 business days
-- **Initial assessment** (reproduction and severity) within 10 business days
-- **Fix and release** within 30 days of a confirmed report, or sooner for high-severity issues
-- **Credit** in the release notes and advisory, unless you prefer otherwise
+- **Acknowledgment:** within 3 business days
+- **Initial assessment** (reproduction and severity rating): within 10 business days
+- **Fix and release:** within 30 days of a confirmed report (sooner for critical/high-severity issues)
+- **Credit** in the release notes and security advisory, unless you prefer to remain anonymous
 
-Maintainers coordinate disclosure timing with you and publish details after a
-fix ships.
+We will coordinate disclosure timing with you and publish the advisory once a
+fix is released.
 
 ## Scope
 
-In scope:
+**In scope:**
 
-- Memory-safety or panic-based denial of service in the engine, reachable from
-  workflow JSON, message payloads, or the wasm bindings
-- JSONLogic evaluation that escapes its intended sandbox (reading or writing
-  outside the `data` / `metadata` / `temp_data` context and the engine-held
-  secret store that `{"secret": "name"}` reads)
-- A secret value reaching a serialized message, a trace, an error, an observer
-  event or a log line
-- Unbounded resource consumption triggered by attacker-controlled input, such as
-  parser input in `parse_json` / `parse_xml`
-- Vulnerabilities in the published npm packages, including the bundled wasm
+- Memory safety issues or panics (denial of service) in the engine triggered by
+  workflow JSON, message payloads, or the WebAssembly bindings
+- JSONLogic evaluation escaping its sandbox (reading or writing outside the
+  `data`, `metadata`, and `temp_data` context roots or the engine's `Secrets` store)
+- Secret values leaking into serialized messages, traces, error records,
+  observer events, or logs
+- Unbounded memory or CPU consumption triggered by untrusted message payloads
+  (for example, in `parse_json` or `parse_xml`)
+- Vulnerabilities in the published npm packages, including the bundled WASM binary
 
-Out of scope:
+**Out of scope:**
 
-- Vulnerabilities in dependencies with an existing RUSTSEC advisory. The
-  `cargo-deny` job tracks these (see [`deny.toml`](deny.toml)). Open a normal
-  issue if you spot one we have missed.
-- Behaviour of custom `Function` implementations you supply. The
-  engine executes registered functions by design; treat workflow definitions as
-  trusted configuration.
-- Resource exhaustion from workflows you authored yourself. Workflow JSON is
-  configuration, not untrusted input; if you accept workflow definitions from
-  untrusted parties, you must validate and sandbox them yourself.
+- Known vulnerabilities in third-party dependencies that already have a RUSTSEC
+  advisory. These are tracked automatically by our `cargo-deny` CI job (see
+  [`deny.toml`](deny.toml)). Feel free to open a regular issue if you notice one
+  that needs attention.
+- Behavior inside custom `Function` implementations provided by your application.
+- Resource exhaustion caused by workflow definitions you authored yourself
+  (unless you are using `ops_budget` / compilation limits and found a bypass).
 
 ## Trust Model
 
 Dataflow-rs treats **workflow definitions as trusted configuration** and
-**message payloads as untrusted data**. Conditions and mappings are JSONLogic
-expressions with no filesystem, network, or process access, evaluated only
-against a message's own context plus the secrets the host hands the engine
-through `ExprEngineBuilder::secrets` (`Secrets`), which expressions read with `{"secret": "name"}` and the
-engine never records. Reports that depend on an attacker being able
-to supply arbitrary workflow JSON fall outside this model, but we are still
-interested in hearing about them. Say so in your report and we will assess it.
+**message payloads as untrusted input**. Conditions and mappings are pure
+JSONLogic expressions with no filesystem, network, or process access; they can
+only read the message context (`data`, `metadata`, `temp_data`) and the engine's
+isolated `Secrets` store (`{"secret": "name"}`).
+
+If you discover an issue that requires an attacker to supply untrusted workflow
+JSON (for example, in a multi-tenant rule authoring environment), we still
+welcome your report—just note that context in your submission so we can evaluate
+it appropriately.

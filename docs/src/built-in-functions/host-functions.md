@@ -1,22 +1,17 @@
 # Host Functions
 
-The engine ships the eight [built-ins](./overview.md) and no I/O. Everything
-else a workflow calls, an HTTP request, a database read, a message on a
-queue, a model, is a **host function**: a `Function` the host registers under
-a name, with a typed config the engine compiles once when it builds, and a
-call the engine makes per task run. 3.x shipped typed configs for
-`http_call`, `enrich` and `publish_kafka` without the functions behind them;
-4.0 ships neither, and a host that used them registers its own under the same
-names. See [Migrating from 3.x](../migration/from-3.md).
+Dataflow-rs ships with eight [built-in functions](./overview.md) and performs no external I/O on its own. Everything else a workflow calls—such as an HTTP request, database query, queue publish, or ML model inference—is a **host function**: a custom `Function` implementation that you register on the engine by name. Its configuration is compiled once when the engine is built, and its `async fn call` method is invoked whenever a task executes it.
 
-This page builds an `http_call` from scratch. To keep the page runnable
-without a network, its function answers every request with a fixed response
-that echoes the request; a real one holds an HTTP client in place of that.
+> **Migrating from 3.x:** Version 3.x included config structs for `http_call`, `enrich`, and `publish_kafka` without built-in runtime implementations. In 4.0, you register your own `Function` implementations under those names using `#[derive(FunctionConfig)]`. See [Migrating from 3.x](../migration/from-3.md).
 
-## A function in three parts
+This guide walks through building a complete `http_call` host function from scratch. To keep all examples self-contained and runnable without network access, `HttpCall` echoes back a structured description of the request; in production, you would hold an `Arc<reqwest::Client>` (or similar client) on the struct.
 
-A host function is a config struct, a `Function` implementation, and a
-registration.
+## A Host Function in Three Parts
+
+Every custom host function consists of:
+1. A config struct with `#[derive(FunctionConfig)]`
+2. A struct implementing `Function`
+3. Registration on `EngineBuilder` (or `Registry`)
 
 ```rust
 use dataflow_rs::datavalue::OwnedDataValue;
@@ -27,26 +22,26 @@ use dataflow_rs::{Ctx, Error, Expr, Function, Issue, Outcome, Result};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-/// The `input` of an `http_call` task, compiled once when the engine builds.
+/// The `input` configuration for an `http_call` task, compiled once at build time.
 #[derive(FunctionConfig)]
 #[config(check = HttpCallConfig::rules)]
 struct HttpCallConfig {
-    /// The connector the request goes through, by name.
+    /// Name of the configured connector to send the request through.
     connector: String,
-    /// The HTTP method.
+    /// HTTP method.
     #[config(default = "GET")]
     method: String,
-    /// The request path.
+    /// Request URL path (static string or JSONLogic expression).
     path: Expr<String>,
-    /// Header values, each JSONLogic.
+    /// Request headers, where each value is a static string or JSONLogic expression.
     #[config(default_json = "{}")]
     headers: BTreeMap<String, Expr<String>>,
-    /// The request body: data with `{"var": ...}` holes.
+    /// Optional request body template with `{"var": "..."}` placeholders.
     body: Option<Interpolated>,
-    /// The request timeout.
+    /// Request timeout in milliseconds.
     #[config(default = 30000)]
     timeout_ms: Expr<u64>,
-    /// Where the response is written.
+    /// Destination path where the response is written.
     #[output(default = "data.response")]
     output: Output,
 }
@@ -54,7 +49,7 @@ struct HttpCallConfig {
 const METHODS: [&str; 5] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
 impl HttpCallConfig {
-    /// A rule the field types alone cannot state, checked at build.
+    /// Custom build-time validation rule checked after all fields compile.
     fn rules(&self, cx: &mut CompileCx<'_>) {
         if !METHODS.contains(&self.method.as_str()) {
             cx.at("method", |cx| {
@@ -65,10 +60,9 @@ impl HttpCallConfig {
     }
 }
 
-/// Sends requests through named connectors. This one holds no client: it
-/// answers every request with a fixed response describing the request.
+/// Sends HTTP requests through named connectors.
 struct HttpCall {
-    /// Connector name to base URL.
+    /// Map of connector name to base URL.
     connectors: BTreeMap<String, String>,
 }
 
@@ -86,8 +80,7 @@ impl HttpCall {
 impl Function for HttpCall {
     type Config = HttpCallConfig;
 
-    /// What the function says about itself, for tooling: read once, when it
-    /// is registered.
+    /// Metadata describing this function for linters, UIs, and catalogues.
     fn spec(&self) -> FunctionSpec {
         FunctionSpec::default()
             .with_description("Sends an HTTP request through a named connector and writes the response.")
@@ -96,8 +89,8 @@ impl Function for HttpCall {
             .with_references(vec![Reference::new("connector", "connector")])
     }
 
-    /// A check the config alone cannot make: the connector must be one this
-    /// deployment has. A Rejected issue refuses the task's workflow at build.
+    /// Deployment-specific build-time check: verify that `cfg.connector` exists
+    /// in `self.connectors`. Returning a `Rejected` issue rejects the workflow at build time.
     fn prepare(
         &self,
         cfg: &mut HttpCallConfig,
@@ -120,7 +113,7 @@ impl Function for HttpCall {
         Err(vec![issue])
     }
 
-    /// One call: read the config against the message, do the work, write.
+    /// Execute a single task call against the current message context.
     async fn call(&self, ctx: &mut Ctx<'_>, cfg: &HttpCallConfig) -> Result<Outcome> {
         let base = &self.connectors[&cfg.connector];
         let path = ctx.eval(&cfg.path)?;
@@ -135,11 +128,10 @@ impl Function for HttpCall {
             None => Value::Null,
         };
 
-        // A real client sends `cfg.method` to `{base}{path}` with the headers
-        // and the body here, and awaits the response within `timeout_ms`.
-        // This one describes the request instead. It writes the header names
-        // and not their values: a header may carry a secret, and what a
-        // function writes, the engine records.
+        // In production, send `cfg.method` to `{base}{path}` with `headers` and `body`.
+        // Note: we record only header names (not values) in the response because a
+        // header may contain a secret, and anything written via `ctx.emit` is recorded
+        // on the message.
         let response = json!({
             "status": 200,
             "url": format!("{base}{path}"),
@@ -154,120 +146,87 @@ impl Function for HttpCall {
 }
 ```
 
-### The config
+### 1. The Config Struct (`#[derive(FunctionConfig)]`)
 
-`#[derive(FunctionConfig)]` applies to a struct with named fields. Each
-field is compiled from the key of its name, and the field's type says what
-position the key holds in the input:
+`#[derive(FunctionConfig)]` generates the build-time compiler, schema specification, and runtime resolver for a struct with named fields. Each field's Rust type determines how the corresponding JSON key in `function.input` is compiled and evaluated:
 
-| Field type | What the key holds | When it is read |
+| Field Type | What the JSON Key Accepts | How It Is Evaluated at Runtime |
 |------------|--------------------|-----------------|
-| `String`, `bool`, `u64`, `i64`, `f64` (and the other integer widths), `serde_json::Value`, `OwnedDataValue` | A literal of that type | Never evaluated: `connector` names the connector, and nothing else |
-| `Expr<T>` | JSONLogic resolving to `T`: `OwnedDataValue` (the default), `String`, `u64`, `i64`, `f64`, `bool` or `Path` | Evaluated per call with `ctx.eval`. An expression that reads nothing folds to a constant at build, and `eval` lends it |
-| `Interpolated` | A document: literal data with `{"var": "..."}` holes, `$` keys kept as data | Rendered per call with `ctx.render`, each hole looked up once |
-| `Output` | A write destination: a path, or JSONLogic computing one | Written through with `ctx.emit`; `#[output(default = "data.x")]` fills an absent key |
-| `Option<T>` | An optional key | Absent, or `null` where `T` has no `null` of its own, is `None` |
-| `Vec<T>`, `BTreeMap<String, T>` | An array or an object of any of these | Each element at its index or key |
-| Another derived config | A nested object | Its own fields, each issue at its path |
-| A `Deserialize + Serialize` type, with `#[config(serde)]` | Whatever it deserializes | Read with `serde_json`; an enum of spellings, say |
+| `String`, `bool`, integer/float primitives, `serde_json::Value`, `OwnedDataValue` | Static JSON literal of that type | Read directly from the config struct (never evaluated as JSONLogic) |
+| `Expr<T>` (`OwnedDataValue`, `String`, `u64`, `i64`, `f64`, `bool`, `Path`) | Static literal or JSONLogic expression resolving to `T` | Evaluated per call with `ctx.eval(&field)`. Static literals fold to constants at build time and are borrowed with zero overhead |
+| `Interpolated` | JSON document template with `{"var": "..."}` placeholders (`$` keys are kept as literal data) | Rendered per call with `ctx.render(&field)`, looking up each placeholder once |
+| `Output` | Destination context path (static string or dynamic JSONLogic expression) | Written to via `ctx.emit(&field, value)` or `ctx.emit_default(value)` |
+| `Option<T>` | Optional field | `None` when the key is omitted (or `null` when `T` does not accept `null`) |
+| `Vec<T>`, `BTreeMap<String, T>` | Array or object map of any supported config field type | Compiled element-by-element with full JSON path tracking |
+| Nested `#[derive(FunctionConfig)]` struct | Nested JSON object | Compiled recursively with issues reported at their nested paths |
+| Any `Deserialize + Serialize` type with `#[config(serde)]` | Any JSON value matching the Serde type | Deserialized at build time via `serde_json` |
 
-The attributes:
+Supported attributes on `#[derive(FunctionConfig)]`:
 
-| Attribute | On | Meaning |
+| Attribute | Target | Description |
 |-----------|----|---------|
-| `#[config(rename = "k")]` | field | The JSON key; the default is the field's name |
-| `#[config(default = <literal>)]` | field | A string, integer, float or bool, compiled through the field's type when the key is absent |
-| `#[config(default_json = "<json>")]` | field | Any JSON default, as text |
-| `#[config(serde)]` | field | Read with `serde_json`; an error is `INPUT_PARSE` |
-| `#[config(records)]` | field | The engine records the field's result, so it may not read a secret |
-| `#[output(default = "p")]` | output | The destination when the key is absent or `null` |
-| `#[output(primary)]` | output | Which output `ctx.emit_default` writes through, when there are several |
-| `#[config(check = path)]` | struct | A `fn(&Self, &mut CompileCx<'_>)` for rules between fields, run once every field compiled |
+| `#[config(rename = "key")]` | Field | Override the JSON property name (defaults to the Rust field name) |
+| `#[config(default = <literal>)]` | Field | Default string, integer, float, or boolean value when the JSON key is omitted |
+| `#[config(default_json = "<json>")]` | Field | Default JSON value (parsed from the string literal) when the key is omitted |
+| `#[config(serde)]` | Field | Deserialize the field at build time using `serde_json` (errors are reported as `INPUT_PARSE`) |
+| `#[config(records)]` | Field | Marks a field whose result is recorded on the message, forbidding `{"secret": "..."}` in that field |
+| `#[output(default = "data.x")]` | `Output` field | Default destination path when the key is omitted or `null` |
+| `#[output(primary)]` | `Output` field | Marks the primary output used by `ctx.emit_default(value)` when a config has multiple `Output` fields |
+| `#[config(check = path::to::fn)]` | Struct | Runs a custom `fn(&Self, &mut CompileCx<'_>)` validator after all fields compile |
 
-The compile reports every issue at once, each at its path below the task's
-`function.input`: an unknown key is `UNKNOWN_KEY`, or `LIKELY_TYPO` when it
-is a near miss of a known one (`paht` for `path`); a missing required key is
-`INPUT_PARSE` (``missing field `path` ``); a literal path outside `data`,
-`metadata` and `temp_data` is `INVALID_PATH`. Any of them refuses the task's
-workflow, so a malformed input fails at build, not on the first message. A
-field's doc comment is its description, which `Registry::catalogue` lists
-with the field.
+At build time, config compilation collects all issues across all fields at once, reporting each at its exact path under `tasks[i].function.input`:
+- Unrecognized keys are reported as `UNKNOWN_KEY` (or `LIKELY_TYPO` for near misses like `paht` instead of `path`).
+- Missing required fields or wrong types are reported as `INPUT_PARSE`.
+- Literal paths outside `data`, `metadata`, and `temp_data` are reported as `INVALID_PATH`.
+- Doc comments on struct fields are captured automatically as field descriptions in `Registry::catalogue()`.
 
-`prepare` runs once the config compiled, with what the config alone cannot
-know: here, the connectors the function was built with. Its issues are
-relative to the config, and the compiler puts them under the task's path. A
-deployment-wide check of every `Reference` a spec declares is the
-`program::ResourceOracle`, given to the compiler through
-`CompileOptions::resources`: a literal name it does not resolve is reported
-as `UNRESOLVED_REFERENCE`, a Defect, which `Compiler::check` returns and the
-definition loads with.
+After `FunctionConfig` compiles the struct, `Function::prepare` runs so your function instance can validate external references (such as checking `cfg.connector` against `self.connectors`). You can also validate declared `Reference`s across all functions using a `program::ResourceOracle` configured on `CompileOptions::resources`.
 
-### The call
+### 2. The `call` Method and `Ctx`
 
-`call` gets a `Ctx`, the function's view of one call, and returns an
-`Outcome` or an `Err`. It is an `async fn` whose future is `Send`, so hold
-nothing that is not `Send` across an `.await`.
+`Function::call` receives `&mut Ctx<'_>` and `&Self::Config`, and returns `Result<Outcome>`. Its returned future must be `Send`.
 
-| `Ctx` method | What it does |
+| `Ctx` Method | Description |
 |--------------|--------------|
-| `eval(&expr)` | Evaluates an `Expr<T>` against the context as this call sees it. A folded constant is lent; anything else is evaluated in a pooled arena and converted to `T` |
-| `render(&doc)` | Renders an `Interpolated`: each hole looked up once, lent from where it was found. The result serializes straight into a wire buffer, and `to_owned()` builds a tree |
-| `get(&path)` | The value at a context path, borrowed where it can be |
-| `payload()` | The message's payload, which no expression reads |
-| `secret("name")` | A secret from the engine's store, which the engine never records |
-| `info()` | The call's facts: the function's name, `workflow_id`, `task_id`, the channel, the loop counter, the fan-out element's index |
-| `emit(&output, value)`, `emit_default(value)` | Writes through an `Output`, or through the config's primary output |
-| `set(&path, value)`, `remove(&path)` | Writes or removes at a path |
-| `record_error(record)` | Adds an `ErrorRecord` to the message's errors, kept whatever the call returns |
-| `input()` | The config resolved for this call with every secret-reading field `null`: what a layer or a dry run reads |
-| `resolve(&cfg)` | The config resolved for this call, secrets included: the function's own view of it |
-| `deadline()`, `cancel()` | The run's limits, for a function that starts work of its own |
+| `eval(&expr)` | Evaluates an `Expr<T>` against the current context (borrows folded constants directly; evaluates dynamic expressions in a pooled arena). |
+| `render(&doc)` | Renders an `Interpolated` document template (serializable directly or convertible to `OwnedDataValue` via `.to_owned()`). |
+| `get(&path)` | Borrows the current value at `path` (including uncommitted writes made earlier in the same call). |
+| `payload()` | Borrows the message's read-only `payload`. |
+| `secret("name")` | Looks up a secret value from the engine's `Secrets` store. |
+| `info()` | Returns `CallIdentity` metadata: `function`, `workflow_id`, `task_id`, `channel`, `routing_bucket`, `loop_counter`, and `element_index`. |
+| `emit(&output, value)`, `emit_default(value)` | Evaluates `output` (or the config's primary output) and writes `value` to that path. |
+| `set(&path, value)`, `remove(&path)` | Writes or removes a value at `path`. |
+| `record_error(record)` | Appends an `ErrorRecord` to `message.errors()` (preserved even if `call` later returns `Err`). |
+| `input()` | Evaluates the config into an `OwnedDataValue` with all secret-reading expressions replaced by `null` (safe for layers and dry runs). |
+| `resolve(&cfg)` | Evaluates the entire config into an `OwnedDataValue` with secrets included (for use inside `call`). |
+| `deadline()`, `cancel()` | Returns the run's `Instant` deadline or `CancelToken` so your function can forward them to downstream I/O. |
 
-What the call returns:
+How the engine handles the return value of `call`:
 
-| Return | Audit status | Record | Then |
+| Return Value | Audit Status | Recorded Error | Next Action |
 |--------|--------------|--------|------|
-| `Ok(Outcome::Ok)` | `200` | none | The next task runs |
-| `Ok(Outcome::Status(s))`, `s < 400` | `s` | none | The next task runs |
-| `Ok(Outcome::Status(s))`, `400 ≤ s < 500` | `s` | none | A rejection: the task's `on_rejection` decides (`continue` by default) |
-| `Ok(Outcome::Status(s))`, `s ≥ 500` | `s` | `TASK_STATUS_ERROR` | A failure: the task's `on_failure` decides (`fail` by default, which reaches the workflow) |
-| `Ok(Outcome::Skip)` | none | none | The next task runs; no `metadata.progress` is written |
-| `Ok(Outcome::Halt)` | `299` | none | The rest of the workflow does not run; later workflows do |
-| `Err(e)` | `500` | `e.code()`, as `Task <id> error: <message>` | A failure, as a `5xx` |
+| `Ok(Outcome::Ok)` | `200` | None | Continue to the next task |
+| `Ok(Outcome::Status(s))` (`s < 400`) | `s` | None | Continue to the next task |
+| `Ok(Outcome::Status(s))` (`400 <= s < 500`) | `s` | None | Treated as a **rejection**: governed by `on_rejection` (`"continue"` by default) |
+| `Ok(Outcome::Status(s))` (`s >= 500`) | `s` | `TASK_STATUS_ERROR` | Treated as a **failure**: governed by `on_failure` (`"fail"` by default) |
+| `Ok(Outcome::Skip)` | *(none)* | None | Skips audit entry and `metadata.progress`; continues to the next task |
+| `Ok(Outcome::Halt)` | `299` | None | Stops the current workflow (`WorkflowExit::Halted`); subsequent workflows still run |
+| `Err(e)` | `500` | `e.code()` (`Task <id> error: <message>`) | Treated as a **failure** (discards all context writes from this call) |
 
-`Error::service(code, message)` makes an error with the host's own code,
-such as `PARTNER_DOWN`, and `with_retryable(true)` marks it retryable; an
-error from `ctx.eval` carries the engine's code (`LOGIC_ERROR`,
-`BUDGET_EXCEEDED`). Reserve `Status` for a status the host answers with, and
-`Halt` and `Skip` for control flow; do not encode control flow in a status.
-See [Actions (Tasks)](../core-concepts/task.md) for the policies.
+### Transactional Overlay Writes
 
-### What a write does
+All writes made during a host function call (`emit`, `emit_default`, `set`, `remove`) are buffered in a per-call overlay:
+- Your function can immediately read its own uncommitted writes via `ctx.get` and `ctx.eval`.
+- When `call` returns `Ok(...)`, the engine commits those writes to the message context in order and records their `Change` entries on the audit trail.
+- When `call` returns `Err(...)`, the engine **discards** all context writes and `Change` entries from that call, ensuring a failed function never leaves the message in a half-updated state (any explicit error records added via `ctx.record_error` are still preserved).
 
-A call's writes go to an overlay of its own. The call reads its own writes at
-once, through `get` and `eval`, and they reach the message only when the
-call returns `Ok`, whatever the `Outcome`: an `Err` drops them, and their
-`Change`s, and keeps the records the call added with `record_error`. The
-settle replays the writes at their own paths, in order, so a write below a
-value another write replaced lands as a sequence of plain writes would.
+Note on context roots (`data`, `metadata`, `temp_data`):
+- Root paths must always hold JSON objects; calling `ctx.set` at `"data"` with a non-object returns a `CONFIG_ERROR`, and root paths cannot be removed.
+- Calling `ctx.set` at a root replaces the root object (unlike `map`, which merges keys into the root).
 
-Two rules hold at a context root. A root takes only an object: `set` at
-`data` with a string, a number or an array is a `CONFIG_ERROR`, and the root
-is kept. And a root cannot be removed. A write at a root replaces it, where
-`map`'s root mapping merges; the audit entry records it as a change at
-`data`. Every write records a `Change` with the path, the old value and the
-new, when the run captures changes (on by default), as `map`'s writes do.
+## 3. Registering and Running the Function
 
-## Registration
-
-`Engine::builder().register(name, f)` registers a function on the builder's
-registry; `Registry::register` does the same on a registry a host keeps. A
-name registered before is replaced. The eight built-in names, and `validate`,
-are reserved: registering one panics, as does a spec the config cannot
-honour, such as a `Reference` naming a field the config does not have. A
-host that registers names from data checks them with
-`def::is_reserved_function` first, or calls `Registry::try_register`, which
-returns an `Err` of kind `Config` instead of panicking.
+Use `Engine::builder().register(name, func)` (or `Registry::register`) to register your function. Built-in function names (and `"validate"`) are reserved—registering a reserved name with `register` panics; use `Registry::try_register` or `def::is_reserved_function` when registering dynamic plugin names.
 
 ```rust
 # use dataflow_rs::datavalue::OwnedDataValue;
@@ -420,8 +379,7 @@ async fn main() {
     assert_eq!(data["user"]["timeout_ms"], json!(30000));
     assert_eq!(data["summary"]["user_url"], json!("https://users.internal/users/7"));
 
-    // A connector the function does not have refuses the workflow at build,
-    // through `prepare`, at the key that names it.
+    // Referencing an unknown connector fails at build time via `prepare`:
     let issues = Engine::builder()
         .register("http_call", HttpCall::new(&[("user_service", "https://users.internal")]))
         .workflow_json(&json!({"id": "w", "tasks": [
@@ -436,7 +394,7 @@ async fn main() {
     assert_eq!(issue.path.to_string(), "tasks[0].function.input.connector");
     assert_eq!(issue.step_id.as_deref(), Some("fetch"));
 
-    // So does a method the config's own check refuses.
+    // Specifying an unsupported HTTP method fails at build time via `#[config(check = ...)]`:
     let issues = Engine::builder()
         .register("http_call", HttpCall::new(&[("user_service", "https://users.internal")]))
         .workflow_json(&json!({"id": "w", "tasks": [
@@ -450,21 +408,12 @@ async fn main() {
 }
 ```
 
-A task calls the function by its registered name, and its `input` is the
-config's JSON. Everything the engine does for a built-in it does here too:
-the compile at build, the audit entry, `metadata.progress`, the policies.
+## Fan-Out (`for_each`) on a Host Function
 
-## `for_each` on a host function
-
-A task's `for_each` runs the function once per element of an array. It is
-refused on a built-in, which runs inline; a host function is where it
-belongs. Each call sees its element at `temp_data.<as>` and the element's
-index at `temp_data.<as>_index`, isolated from the other calls: the calls
-run under `max_concurrency` at once, and their writes are folded into the
-message in element order once every call has finished, so `max_concurrency`
-changes timing and never results. With `collect` and `into`, what each call
-left at `collect` lands in the array at `into`, in element order.
-`ctx.info().element_index` says which element a call is.
+Adding a `for_each` block to a task executes its host function once per element of a source array:
+- Each element call sees its item at `temp_data.<as>` and its zero-based index at `temp_data.<as>_index` (and `ctx.info().element_index`), isolated from sibling element calls.
+- Up to `max_concurrency` calls run concurrently, and their writes are folded into the message in element order once all calls finish—so changing `max_concurrency` affects latency without changing the resulting message state.
+- When `collect` and `into` are configured, the value each call writes to `collect` is gathered into an array at `into` in element order.
 
 ```rust
 # use dataflow_rs::datavalue::OwnedDataValue;
@@ -575,27 +524,17 @@ async fn main() {
 }
 ```
 
-The folding rules, what a failing element leaves, and the loop shape are on
-the [Fan-Out](../advanced/for-each.md) page.
+See [Fan-Out (`for_each`)](../advanced/for-each.md) for complete details on element folding and error policies.
 
-## Layers
+## Middleware Layers (`CallLayer`)
 
-A `CallLayer` wraps host calls: it is handed the call's `Ctx` and the rest
-of the chain, `Next`, and runs the chain with `next.run(ctx).await`, or
-answers without running it. The built-ins run inline and are never wrapped.
+A `CallLayer` wraps host function calls, receiving the call's `Ctx` and the remainder of the call chain (`Next`). A layer can inspect or modify `ctx`, time the call, delegate via `next.run(ctx).await`, or short-circuit with a synthetic response. (Built-in functions run inline and do not pass through `CallLayer`s.)
 
-A layer is added at two scopes. `EngineBuilder::layer`, or
-`Registry::layer`, wraps every host call of every run; `RunOptions::layers`
-wraps the calls of one run. The run's layers are outermost, then the
-registry's, each list in the order it was added, then the function.
+You can attach layers at two scopes:
+- **Engine-wide:** `EngineBuilder::layer` (or `Registry::layer`) wraps every host call across all runs.
+- **Per-run:** `RunOptions::layers` wraps host calls for a single run, executing outside the registry's layers.
 
-`layers::Answer` is a ready-made layer for a dry run: a closure is asked
-about each call and sees its `Ctx`, with `info()`, `input()` and
-`primary_output()`; `Some(value)` is written through the callee's primary
-output and the call returns `Ok` without reaching the layers inside it or the
-function, and `None` passes the call on. `input()` is the config resolved
-for the call with every secret-reading field `null`, so a dry run can log a
-request without logging its credential:
+`function::layers::Answer` is a built-in helper layer for dry runs and tests: you pass a closure that inspects `ctx` (`ctx.info()`, `ctx.input()`, `ctx.primary_output()`) and returns `Some(value)` to write `value` to the primary output and short-circuit with `Outcome::Ok`, or `None` to pass the call through. Because `ctx.input()` redacts any field that references a secret to `null`, dry-run layers can safely log or record resolved task inputs without leaking credentials:
 
 ```rust
 # use dataflow_rs::expr::{CompileCx, Interpolated, Output};
@@ -666,7 +605,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-/// Times every host call into shared counters.
+/// Middleware layer that counts and times host function calls.
 struct Metered {
     calls: Arc<AtomicU64>,
     nanos: Arc<AtomicU64>,
@@ -686,7 +625,7 @@ impl CallLayer for Metered {
 
 #[tokio::main]
 async fn main() {
-    // The engine's secrets: a header reads one by name.
+    // Configure a secret store so the Authorization header can read a token.
     let secrets = Secrets::new(OwnedDataValue::from(&json!({"user_service_token": "s3cr3t"})))
         .expect("an object");
     let exprs = ExprEngine::builder().secrets(secrets).build().expect("the expression engine builds");
@@ -707,7 +646,7 @@ async fn main() {
         .build()
         .expect("the engine builds");
 
-    // A real run: the function runs inside the meter.
+    // 1. Live run: executes `HttpCall` inside the `Metered` layer.
     let mut message = Message::new(OwnedDataValue::Null);
     engine.run(&mut message).await.into_result().expect("the run completes");
     assert_eq!(calls.load(Ordering::Relaxed), 1);
@@ -715,8 +654,8 @@ async fn main() {
     assert_eq!(data["user"]["headers"], json!(["Authorization"]));
     assert!(!message.to_json().to_string().contains("s3cr3t"));
 
-    // A dry run: every `http_call` with somewhere to write is answered with
-    // the request it would have made; any other call goes through.
+    // 2. Dry run: `Answer` intercepts `http_call` and writes the resolved input
+    //    without calling `HttpCall` or inner registry layers.
     let dry_run: Vec<Arc<dyn CallLayer>> = vec![Arc::new(Answer::new(|ctx| {
         if ctx.info().function != "http_call" || ctx.primary_output().is_none() {
             return None;
@@ -732,30 +671,19 @@ async fn main() {
     assert_eq!(data["user"]["status"], json!("dry run"));
     assert_eq!(data["user"]["request"]["path"], json!("/users/7"));
     assert_eq!(data["user"]["request"]["timeout_ms"], json!(30000));
-    // The header that reads a secret is `null` in `input()`: never evaluated.
+    // The secret-bearing header is automatically redacted to `null` in `ctx.input()`.
     assert_eq!(data["user"]["request"]["headers"]["Authorization"], Value::Null);
-    // The answer came before the registry's layers: the meter saw no call.
+    // Because the per-run `Answer` layer short-circuited outside `Metered`, `calls` is still 1.
     assert_eq!(calls.load(Ordering::Relaxed), 1);
 }
 ```
 
-Inside the function, `ctx.eval` on the same header gives the real value: a
-secret is the function's to use and the engine's to keep out of the message.
-A field whose result the engine records, an `Output` or a field marked
-`#[config(records)]`, may not read a secret at all; the definition is refused
-with `SECRET_IN_MESSAGE_WRITE`. See [Secrets](../advanced/secrets.md).
+## Unit-Testing a Host Function (`function::testing`)
 
-## Testing a function
+`function::testing::call(func, input_json)` lets you unit-test a single host function call directly—running real config compilation, `prepare`, `Ctx` overlay buffering, and any layers—without needing to construct a full workflow or `Engine`.
 
-`function::testing::call(f, input)` runs one call of one function outside
-any workflow, through the real compile, the real `Ctx` and overlay, and the
-layers it is given, and settles it as a run would. No registry, compiler,
-definition or engine is assembled by hand. It is a builder: `.message(m)`
-sets the message the call runs over, `.layer(l)` adds a layer, `.name(n)`
-the name the function is called by; `.await` runs it and gives a `Called`
-with the compile `issues`, the `outcome`, the call's `writes` and `changes`,
-the `errors` it recorded, and the `message` after the settle. `testing::config`
-compiles a config alone.
+- Chain `.message(msg)`, `.layer(layer)`, or `.name("name")` on the builder, then `.await` it to get a `Called` report containing `issues`, `outcome`, `writes`, `changes`, `errors`, and the updated `message`.
+- Use `function::testing::config(input_json)` to test config compilation in isolation.
 
 ```rust
 # use dataflow_rs::expr::{CompileCx, Interpolated, Output};
@@ -847,7 +775,7 @@ use serde_json::{Value, json};
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
 let http_call = || HttpCall::new(&[("user_service", "https://users.internal")]);
 
-// One call over a message, through the real compile and overlay.
+// 1. Test a single call against a seeded message:
 let input = json!({
     "connector": "user_service",
     "method": "POST",
@@ -868,14 +796,14 @@ assert_eq!(response["url"], json!("https://users.internal/users/7"));
 assert_eq!(response["method"], json!("POST"));
 assert_eq!(response["body"], json!({"include": ["orders"], "since": "2026-01-01"}));
 
-// A config that does not compile runs nothing; `issues` says why.
+// 2. Test an invalid config (reports `LikelyTypo` for `paht` and `InputParse` for missing `path`):
 let called = testing::call(http_call(), json!({"connector": "user_service", "paht": "/x"})).await;
 let codes: Vec<IssueCode> = called.issues.iter().map(|i| i.code).collect();
 assert_eq!(codes, [IssueCode::LikelyTypo, IssueCode::InputParse]);
 assert!(called.outcome.is_err());
 assert!(called.writes.is_empty());
 
-// A config alone, its defaults filled in.
+// 3. Test config compilation and default values on their own:
 let cfg: HttpCallConfig =
     testing::config(json!({"connector": "user_service", "path": "/x"})).ok().unwrap();
 assert_eq!(cfg.method, "GET");
@@ -884,17 +812,13 @@ assert_eq!(cfg.output.constant().unwrap().to_string(), "data.response");
 # });
 ```
 
-## Plugins with runtime fields
+## Dynamic Plugins (`Templated` Configs)
 
-A function whose fields are not known when the host is compiled, such as a
-plugin loaded from a manifest, declares them at registration instead:
-`FunctionSpec::with_runtime_fields` lists them as `FieldSpec`s, and the
-function's `Config` is `function::Templated`, which compiles them by their
-kinds and lets the call read them by name. The API reference documents both.
+If a function's configuration schema is loaded dynamically at runtime (for example, from a plugin manifest rather than a compile-time Rust struct), set `type Config = function::Templated` and declare its fields via `FunctionSpec::with_runtime_fields(vec![FieldSpec::...])`. The engine will validate and compile the fields according to their declared `FieldKind`s and allow `call` to evaluate them by field name. See the [Custom Functions guide](../advanced/custom-functions.md#plugins-whose-fields-come-from-a-manifest) for an example.
 
 ## Next Steps
 
-- [Fan-Out](../advanced/for-each.md): `for_each` on a host function, in full
-- [Secrets](../advanced/secrets.md): what a function may read and what the engine never records
-- [Custom Functions](../advanced/custom-functions.md): the longer guide
-- [API Reference](../api/reference.md)
+- [Custom Functions](../advanced/custom-functions.md) — Deep dive into config types, `Interpolated` documents, and dynamic plugins
+- [Fan-Out (`for_each`)](../advanced/for-each.md) — Concurrent per-element execution and folding rules
+- [Secrets](../advanced/secrets.md) — Working with secrets safely inside host functions
+- [API Reference](../api/reference.md) — Complete type and method reference

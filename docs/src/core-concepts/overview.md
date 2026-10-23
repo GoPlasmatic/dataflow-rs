@@ -1,6 +1,6 @@
 # Core Concepts Overview
 
-Dataflow-rs has a small set of core concepts that together build a program from definitions and run messages over it.
+Dataflow-rs is built around a small set of core types that compile JSON definitions into an immutable program and run messages through it.
 
 ## The Big Picture
 
@@ -48,68 +48,60 @@ Dataflow-rs has a small set of core concepts that together build a program from 
 | Component | Purpose | Key Features |
 |---|---------|--------------|
 | **Workflow** (`WorkflowDef`) | Groups related tasks | Priority ordering, condition, failure policy, channel, lifecycle |
-| **Task** (`TaskDef`) | One function call | Built-in or host function, condition, outcome policies, fan-out |
-| **Registry** | The functions a program may call | The eight built-ins, host functions, layers, the expression engine |
-| **Compiler** and **Program** | Compile and link definitions | One workflow at a time, every issue at its authored path, an immutable result |
-| **Engine** | Runs messages over a program | Run options, observers, traces, the error context, reload |
-| **Message** | Carries the data | A payload, the `{data, metadata, temp_data}` context, an audit trail, errors |
-| **Run** | Reports one run | Status, matched workflows, each workflow's selection and exit, the trace |
+| **Task** (`TaskDef`) | Executes one function call | Built-in or host function, condition, outcome policies, `for_each` fan-out |
+| **Registry** | Holds callable functions and operators | 8 built-in functions, custom host functions, call layers, `ExprEngine` |
+| **Compiler** & **Program** | Compiles and links definitions | Compiles one workflow at a time, reports issues by JSON path, produces an immutable `Program` |
+| **Engine** | Executes messages against a program | Run options, observers, traces, error-context mirroring, hot reload |
+| **Message** | Carries input and runtime state | Raw `payload`, `{data, metadata, temp_data}` context, audit trail, error list |
+| **Run** | Reports the outcome of a run | Final status, matched workflow count, per-workflow selection and exit, optional trace |
 
-The [Message](./message.md) carries the data through them: a `payload`, the
-`{data, metadata, temp_data}` context every condition evaluates against, an
-audit trail and a list of errors.
+The [Message](./message.md) flows through the engine, carrying the raw `payload`, the `{data, metadata, temp_data}` context evaluated by JSONLogic conditions, an audit trail, and a list of recorded errors.
 
 ## Processing Flow
 
 1. **Build**
-   - Parse each definition; the parser is also the linter, and reports every issue at the path the author typed
-   - Compile every expression and every function config, one workflow at a time
-   - Link the compiled workflows into a program, sorted by priority
-   - Pair the program with an `EngineConfig` to get an `Engine`
+   - Parse and lint each workflow definition with `def::parse`, which reports issues at their exact JSON paths.
+   - Compile expressions and function configs one workflow at a time with `Compiler`.
+   - Link the compiled workflows into an immutable `Program` sorted by priority.
+   - Combine the `Program` with an `EngineConfig` to create an `Engine`.
 
 2. **Run**
-   - Create a message with a payload
-   - The engine stamps `metadata.processed_at` and `metadata.engine_version`
-   - It evaluates each active workflow's condition against the full context, in priority order
+   - Create a `Message` with an input payload.
+   - At the start of `run`, the engine stamps `metadata.processed_at` and `metadata.engine_version`.
+   - The engine evaluates each active workflow's condition against `{data, metadata, temp_data}` in priority order.
 
 3. **Task Execution**
-   - Tasks run in order within each matching workflow
-   - A built-in runs inline; a host function gets a `Ctx` and writes to an overlay that lands when it returns `Ok`
-   - Each task's writes are recorded on the audit trail, and `metadata.progress` is rewritten after it
+   - Tasks inside each matching workflow execute sequentially.
+   - Built-in functions run inline on the context view; custom host functions receive a `Ctx` and write to a per-call overlay that commits when the call returns `Ok`.
+   - Each task's changes are appended to the message's audit trail, and `metadata.progress` is updated after every executed task.
 
 4. **Result**
-   - The `Run` says how the run ended and what each workflow did
-   - The message holds the transformed context, the audit trail and every error recorded
+   - `Run` reports the final execution status and what each workflow did.
+   - `Message` holds the updated context, audit trail, and any recorded errors.
 
 ## Key Design Principles
 
 ### Compile Once
-The compiler validates JSONLogic expressions and function configs when building
-the program. Invalid definitions fail the build with structured issues, and
-constant expressions fold once at compile time.
+The compiler validates JSONLogic expressions and function configs when building the program. Invalid definitions fail at build time with structured issues, and constant expressions are folded once ahead of time.
 
-### Immutability
-A linked `Program` is immutable. `Engine` wraps its program and config in an
-`Arc`, so clones share state without copying. Reloading creates a new engine via
-`Engine::with_program` while existing runs finish on the previous instance.
+### Immutability & Hot Reload
+A linked `Program` is immutable. `Engine` wraps its `Program` and `EngineConfig` in an `Arc`, making `Engine::clone` cheap and thread-safe. Hot-reloading creates a new `Engine` via `Engine::with_program` while in-flight runs finish undisturbed on the previous program.
 
 ### Separation of Concerns
-- **`def`** parses and lints definitions into plain data (`WorkflowDef`)
-- **`expr`** compiles and evaluates JSONLogic (`ExprEngine`, `Expr`, `Path`)
-- **`function`** holds the functions a task calls (`Function`, `Ctx`, `Registry`, layers)
-- **`program`** compiles and links (`Compiler`, `Program`, the issue vocabulary)
-- **`run`** runs messages (`Engine`, `RunOptions`, `Message`, `Run`)
-- **`observe`** reports what a run did (`Observer`, `Event`, `Trace`)
+- **`def`** — Parses and lints JSON definitions into typed data structures (`WorkflowDef`).
+- **`expr`** — Compiles and evaluates JSONLogic expressions (`ExprEngine`, `Expr`, `Path`).
+- **`function`** — Defines the custom function trait, context, registry, and call layers (`Function`, `Ctx`, `Registry`, `CallLayer`).
+- **`program`** — Compiles and links workflows (`Compiler`, `Program`, `Issue`).
+- **`run`** — Executes messages and reports outcomes (`Engine`, `RunOptions`, `Message`, `Run`).
+- **`observe`** — Provides execution tracing and metrics hooks (`Observer`, `Event`, `Trace`).
 
-### Audit Trail
-The engine records every write a task makes, so you can see each processing
-step for debugging and compliance. A trace adds the context before any step
-and each step's changes, replayable to the context after any step.
+### Auditability
+The engine records every context write made by tasks so you can inspect each processing step for debugging or compliance. Enabling tracing also captures the initial context and per-step diffs so you can replay the exact state after any step.
 
 ## Detailed Documentation
 
-- [Engine](./engine.md) - Building, running, observing and reloading
-- [Workflows](./workflow.md) - Condition plus tasks bundles
-- [Tasks](./task.md) - Individual processing units
-- [Message](./message.md) - Data container with audit trail
-- [Error Handling](./error-handling.md) - Failures, rejections and the policies
+- [Engine](./engine.md) — Building, running, observing, and reloading the engine
+- [Workflows](./workflow.md) — Defining conditions, priorities, channels, and rollouts
+- [Tasks](./task.md) — Configuring function calls, conditions, and outcome policies
+- [Message](./message.md) — Working with payloads, context roots, audit trails, and errors
+- [Error Handling](./error-handling.md) — Understanding failures, rejections, and recovery policies

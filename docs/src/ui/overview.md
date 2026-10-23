@@ -1,9 +1,6 @@
 # UI Package
 
-The `@goplasmatic/dataflow-ui` package provides React components for
-visualizing and debugging dataflow-rs 4.0 workflows: a tree of workflows,
-tasks and conditions, a flow diagram per workflow, and a debugger that runs
-a message through the engine and steps through its trace.
+The `@goplasmatic/dataflow-ui` package provides React components for visualizing and debugging `dataflow-rs` 4.0 workflows: an interactive tree of workflows, tasks, and conditions; a flow diagram for each workflow; and a step-by-step debugger that runs messages through the engine and replays execution traces.
 
 ## Installation
 
@@ -59,45 +56,44 @@ function App() {
 }
 ```
 
-Viewing definitions needs no engine. Debugging does; see
-[Debug Mode](#debug-mode).
+Viewing workflow definitions does not require an engine instance; interactive debugging does (see [Debug Mode](#debug-mode)).
 
 ## Components
 
-### WorkflowVisualizer
+### `WorkflowVisualizer`
 
-The main component for displaying workflows in an interactive tree view.
+The primary component for browsing, visualizing, and debugging workflows.
 
 ```tsx
 interface WorkflowVisualizerProps {
   /** Array of workflow definitions to display */
   workflows: Workflow[];
-  /** What is selected on mount in uncontrolled mode. Default: nothing. */
+  /** Initial selection when mounted in uncontrolled mode (default: none) */
   initialSelection?: InitialVisualizerSelection;
-  /** Controlled selection; when set, the visualizer renders this and reports changes */
+  /** Controlled selection state */
   selection?: VisualizerSelection | null;
-  /** Callback when the selection changes */
+  /** Callback fired when the selection changes */
   onSelectionChange?: (selection: VisualizerSelection | null) => void;
-  /** Callback when a workflow is selected */
+  /** Callback fired when a workflow is selected */
   onWorkflowSelect?: (workflow: Workflow) => void;
-  /** Callback when a task is selected */
+  /** Callback fired when a task is selected */
   onTaskSelect?: (task: Task, workflow: Workflow) => void;
-  /** Theme: 'light', 'dark', or 'system' */
+  /** Color theme: 'light', 'dark', or 'system' */
   theme?: Theme;
-  /** Additional CSS class for the root element */
+  /** Additional CSS class for the root container */
   className?: string;
-  /** A message to display in the result panel */
+  /** Optional processed message to display in the result panel */
   executionResult?: Message | null;
-  /** Integrated debug mode; see Debug Mode below */
+  /** Integrated step-by-step debugger configuration; see Debug Mode below */
   debugConfig?: DebugConfig;
-  /** Payload for debugging; takes precedence over debugConfig.initialPayload */
+  /** Input payload for debugging (overrides debugConfig.initialPayload) */
   debugPayload?: Record<string, unknown>;
 }
 ```
 
-### TreeView
+### `TreeView`
 
-Standalone tree view component for custom layouts.
+Standalone tree navigation component for custom layouts:
 
 ```tsx
 import { TreeView } from '@goplasmatic/dataflow-ui';
@@ -112,9 +108,7 @@ import { TreeView } from '@goplasmatic/dataflow-ui';
 
 ## Debug Mode
 
-Step-by-step execution visualization. The simplest form is `debugConfig`. The
-visualizer then wraps itself in a `DebuggerProvider` and renders the controls
-in its own header, so you do not assemble the pieces yourself:
+Pass `debugConfig` to `WorkflowVisualizer` to enable integrated step-by-step execution and trace playback. When `debugConfig.enabled` is `true`, `WorkflowVisualizer` sets up its own `DebuggerProvider` and renders playback controls in the header:
 
 ```tsx
 import { WorkflowVisualizer, defaultEngineFactory } from '@goplasmatic/dataflow-ui';
@@ -136,28 +130,14 @@ function DebugView() {
 }
 ```
 
-`engineFactory` enables execution: without it the run button is disabled.
-`defaultEngineFactory` uses the WASM engine from `@goplasmatic/dataflow-wasm`.
+- `engineFactory` provides the engine used to execute messages (when `undefined`, the Run button stays disabled). `defaultEngineFactory` uses `@goplasmatic/dataflow-wasm`.
+- `debugPayload` is passed to the engine as the message **`payload`**. Because `payload` is separate from `{ data, metadata, temp_data }`, your workflow should start with a `parse_json` task (`{"source": "payload", "target": "input"}`) so expressions can read `data.input.*`.
 
-`debugPayload` is the **payload**, passed to the engine as the object it is.
-It is not part of the JSONLogic evaluation context, so the workflow needs a
-`parse_json` task (`{"source": "payload", "target": "input"}`) before any
-expression can read it as `data.input.…`; `parse_json` copies an object
-payload as it is.
+### Initializing the WASM Module
 
-### Initialising the engine
+Before running workflows or replaying traces, you must initialize `@goplasmatic/dataflow-wasm` once by awaiting its default export (`initWasm()`). This is required both when using `defaultEngineFactory` and when using a custom server engine, because the debugger replays trace diffs locally through `@goplasmatic/dataflow-wasm`'s `TraceReplay`.
 
-The engine's module must be instantiated **once** before anything runs, and
-before a trace is rendered. `defaultEngineFactory` builds a
-`WasmEngineAdapter`, which calls into `@goplasmatic/dataflow-wasm` as soon as
-it is constructed; and the debugger replays every trace through that
-package's `contexts`, so the requirement holds with a custom engine too. The
-package is a `--target web` wasm-bindgen build: await its default export
-first, or the first call throws a bare `TypeError` from the uninitialised
-glue, before the version handshake below can say anything useful.
-
-Withhold `engineFactory` until it resolves; until then the run button is
-disabled:
+Pass `undefined` for `engineFactory` until `initWasm()` resolves so the Run button remains disabled until the module is ready:
 
 ```tsx
 import { useEffect, useState } from 'react';
@@ -173,10 +153,7 @@ function useEngineFactory() {
 }
 ```
 
-Then pass `engineFactory: useEngineFactory()` instead of the bare
-`defaultEngineFactory` in the shape above.
-
-### DebugConfig
+### `DebugConfig` and `ExecutionError`
 
 ```tsx
 interface DebugConfig {
@@ -189,91 +166,56 @@ interface DebugConfig {
 }
 
 interface ExecutionError {
-  code: string;        // "REJECTED", "INVALID_ARGUMENT", "INVALID_TRACE" (a custom engine's
-                       // trace the package cannot replay), or "ERROR" for anything else thrown
+  code: string;        // "REJECTED", "INVALID_ARGUMENT", "INVALID_TRACE", or "ERROR"
   message: string;
-  issues?: Issue[];    // for a refused definition: every issue, at its authored path
+  issues?: Issue[];    // Present when `code === "REJECTED"`: all definition issues with JSON paths
 }
 ```
 
-`onExecutionComplete` fires on every status with the engine's `RunResult`
-(`{ message, run, trace? }`): a run that stopped or timed out completes too,
-so read `result.run.status`. `onExecutionError` fires when a run could not
-start: the engine refused a definition or an argument, or something else
-threw on the way.
+- `onExecutionComplete` fires whenever a run finishes—even if it stopped on an error or timed out (`result.run.status` indicates how the run ended).
+- `onExecutionError` fires when a run could not start (for example, if a definition was rejected with `"REJECTED"`, an argument was malformed, or a custom engine returned an invalid trace).
 
-### What the debugger shows
+### What the Debugger Shows
 
-A dataflow-rs 4.0 trace holds `initial`, the context before any workflow,
-and one step per call, skip, failure and engine write, each with its
-changes. There is no per-step message snapshot: the context at a step is
-rebuilt by replaying the changes on demand through a `TraceReplay` cursor
-from the wasm package, so the UI and the engine never disagree on the rules
-and only one working context is retained in memory.
+A `dataflow-rs` 4.0 trace stores `initial` (the context before any workflow ran) and one `TraceStep` per task call, skip, failure, or engine write along with its `changes`. Instead of storing full message snapshots at every step, the UI reconstructs the context on demand using a `TraceReplay` cursor from `@goplasmatic/dataflow-wasm`:
 
-- **The toolbar** reads `run.status` and the final message's `errors`.
-- **The context at step `i`** is `contextAt(i)`, and before the first step
-  (`-1`) `trace.initial`. The state panel shows it beside the step's `status`
-  and `errors`.
-- **A failing step** (`result: "failed"`) renders as an error, and so does an
-  executed step that recorded errors, such as a `validation` whose rules
-  failed. A workflow whose condition or rollout refused it renders as skipped.
-  The engine's own steps (a loop sweep entered) belong to no task.
-- **A `map` step** shows the context after each of its mappings
-  (`mappingContextAt(i, m)`).
-- **At the end**, the final message's `errors` and `audit_trail`.
+- **Toolbar** — Displays `run.status` and any errors on the final message.
+- **Step Context** — `contextAt(i)` reconstructs the context after step `i` (and `trace.initial` at index `-1` before the first step), displayed alongside the step's status code and error records.
+- **Failed & Skipped Steps** — Steps with `result: "failed"` or executed steps that recorded errors (such as failed `validation` rules) are highlighted as errors. Workflows skipped due to a false condition or rollout mismatch are shown as skipped.
+- **Per-Mapping Inspection** — For `map` tasks, `mappingContextAt(i, m)` displays the context after each individual mapping.
+- **Final State** — Shows the final message's `errors` and `audit_trail`.
 
-A trace whose byte budget was crossed (`trace.truncated`) is not replayed: the
-debugger shows `trace.initial` at every step and says so in the state panel;
-`traceIsReplayable(trace)` is the test.
+If a trace exceeded its `max_bytes` budget (`trace.truncated === true`), diffs are incomplete and `traceIsReplayable(trace)` returns `false`; the state panel displays `trace.initial` and notes that the trace was truncated.
 
-### `debugConfig` is what turns debug mode on
+### Using `debugConfig` vs. `DebuggerProvider`
 
-Wrapping `WorkflowVisualizer` in a `DebuggerProvider` does **not** enable debug
-mode. The visualizer derives it from `debugConfig.enabled` alone, and when that
-is true it creates its *own* `DebuggerProvider` internally, and that provider
-shadows any ambient one for everything it renders.
+`WorkflowVisualizer` enables debug mode only when `debugConfig.enabled` is `true`, creating its own internal `DebuggerProvider`. Wrapping `WorkflowVisualizer` in an external `<DebuggerProvider>` without setting `debugConfig` will not enable debug mode on the visualizer, and any external debug panels placed outside `WorkflowVisualizer` will not share state with the visualizer's internal provider.
 
-The practical consequences:
+- For standard use, pass `debugConfig` to `WorkflowVisualizer` and use its built-in toolbar and panels.
+- For a completely custom layout, compose the standalone components (`TreeView`, `WorkflowFlowView`, `DebuggerControls`, `MessageInputPanel`, `MessageStatePanel`) inside a single `<DebuggerProvider>`.
 
-- `<DebuggerProvider><WorkflowVisualizer workflows={…} /></DebuggerProvider>`
-  with no `debugConfig` renders in plain, non-debug mode.
-- Panels you place **outside** the visualizer read the ambient provider, while
-  the visualizer reads its own. Two providers means two independent states, so
-  the external panels will not follow the visualizer's playback.
+### Engine Version Check
 
-To drive your own layout, use the components standalone under one provider and
-leave the visualizer out of the debug path, or keep everything inside
-`debugConfig` and let the built-in toolbar drive it.
+When `WasmEngineAdapter` is constructed, it calls `assertEngineVersion()` and throws an error if the loaded `@goplasmatic/dataflow-wasm` module is older than the `@goplasmatic/dataflow-ui` build. Newer WASM versions are accepted.
 
-### Engine version handshake
+## Custom Engine (Server-Side Execution)
 
-`WasmEngineAdapter` calls `assertEngineVersion()` on construction and **throws**
-when the loaded WASM engine is older than the UI build expects. Versions
-compare as semver with pre-release tags dropped. Do not ignore this error: an
-older engine treats newer definition keys as unknown keys (moving them into
-`ext`), so workflows using newer features will not behave as written. Newer
-engines pass the check because the package declares a caret range on the WASM
-dependency.
-
-## Custom Engine
-
-Use a custom engine, such as a server-side dataflow-rs with its registered
-functions, by implementing `DataflowEngine`. The interface carries the wasm
-package's `RunResult` and nothing of its own:
+To run workflows on a Rust backend (for example, when workflows invoke custom server-side host functions) while stepping through the resulting trace in the UI, implement `DataflowEngine`:
 
 ```tsx
 import type { RunOptions, RunResult } from '@goplasmatic/dataflow-wasm';
 
 interface DataflowEngine {
-  /** Run one message and resolve with the message, the run and its trace. */
+  /** Execute a message and resolve with `{ message, run, trace }`. */
   run(payload: unknown, options?: RunOptions): Promise<RunResult>;
-  /** Release the engine's resources. Called when the workflows change. */
+  /** Release any resources when workflows change or the debugger unmounts. */
   dispose?(): void;
 }
 
 type EngineFactory = (workflows: Workflow[]) => DataflowEngine;
 ```
+
+Example implementation calling a backend `/run` endpoint:
 
 ```tsx
 import type { RunOptions, RunResult } from '@goplasmatic/dataflow-wasm';
@@ -291,10 +233,10 @@ class ServerEngine implements DataflowEngine {
     const response = await fetch('/run', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      // The debugger needs a trace to step through: ask for one unless the caller said otherwise.
+      // Always request a trace unless the caller explicitly disabled it.
       body: JSON.stringify({ workflows: this.workflows, payload, options: { trace: true, ...options } }),
     });
-    // A Rust host's Message, Run and Trace serialize to the package's wire types.
+    // Rust `Message`, `Run`, and `Trace` serialize directly to the expected wire types.
     return (await response.json()) as RunResult;
   }
 
@@ -314,33 +256,14 @@ function CustomDebugView() {
 }
 ```
 
-Three rules for a custom engine:
+Requirements for a custom `DataflowEngine`:
+1. `run` must resolve on every run status (including `"stopped"` and `"timed_out"`) with `{ message, run, trace }`.
+2. If workflow definitions are rejected, throw an `EngineError` with `code: "REJECTED"` and `issues` so the UI can display them.
+3. `@goplasmatic/dataflow-wasm` must still be initialized with `initWasm()`, as the UI uses its `TraceReplay` cursor to replay the trace.
 
-- `run` resolves on every status, as the wasm engine does. A stopped run
-  resolves with `run.status: "stopped"` and its trace; only a malformed
-  argument rejects.
-- The factory may throw an `EngineError` for a refused definition; the
-  debugger shows its `issues`.
-- `@goplasmatic/dataflow-wasm` must still be initialised, since the debugger
-  replays the trace through it.
+### `DebuggerControls` and `useDebugger`
 
-`DebuggerProvider` calls `engineFactory` whenever workflows change, so the
-engine always has the latest workflow definitions, and calls `dispose` on the
-previous one.
-
-### Debugger Controls
-
-```tsx
-import { DebuggerControls } from '@goplasmatic/dataflow-ui';
-
-// Provides playback controls: play, pause, step forward/back, reset
-<DebuggerControls />
-```
-
-### useDebugger Hook
-
-Access debugger state programmatically. The state holds the engine's result
-and an on-demand replay cursor over its trace:
+For custom layouts under a `<DebuggerProvider>`, use `<DebuggerControls />` and the `useDebugger()` hook:
 
 ```tsx
 import { useDebugger } from '@goplasmatic/dataflow-ui';
@@ -361,11 +284,11 @@ function MyComponent() {
   } = useDebugger();
 
   // state: DebuggerState
-  //   trace: Trace | null           the trace of the last run
-  //   run: Run | null               how it ended and what each workflow did
-  //   message: Message | null       the message after the run
-  //   replay: TraceReplay | null    the on-demand engine replay cursor
-  //   currentStepIndex: number      -1 before the first step
+  //   trace: Trace | null           Trace of the last run
+  //   run: Run | null               Run status and per-workflow summary
+  //   message: Message | null       Final message after the run
+  //   replay: TraceReplay | null    On-demand WASM trace replay cursor
+  //   currentStepIndex: number      Current step index (-1 is initial context)
   //   executionError: ExecutionError | null
   //   isExecuting, playbackState, playbackSpeed, inputPayload, skipFailedConditions
 
@@ -376,47 +299,35 @@ function MyComponent() {
 }
 ```
 
-`useDebugger` throws outside a `DebuggerProvider`. For a component that should
-work in both contexts, use `useDebuggerOptional`, which returns `null` instead.
-`TreeView` uses it to render with and without the debugger attached.
+`useDebugger()` throws if called outside a `DebuggerProvider`; use `useDebuggerOptional()` (which returns `null` outside a provider) for components that render in both static and debug modes.
 
-## Definitions
+## Workflow and Task Definition Types
 
-`Workflow` and `Task` carry the 4.0 policies, `on_failure` and
-`on_rejection`, beside the 3.x spellings `continue_on_error` and `halt_on`,
-which the engine still reads and rewrites. Cards and flow nodes render
-whichever is present. A key the engine does not know ends up in the node's
-`ext`; the folder tree reads `workflow.ext?.path ?? workflow.path`.
+`Workflow` and `Task` support both 4.0 policy fields (`on_failure`, `on_rejection`) and legacy 3.x fields (`continue_on_error`, `halt_on`). Unrecognized keys are preserved in `ext` (for example, the folder tree checks `workflow.ext?.path ?? workflow.path`):
 
 ```ts
 interface Workflow {
-  on_failure?: 'fail' | 'continue';            // what a task failure does to the run; "fail" stops it
-  continue_on_error?: boolean;                 // 3.x: true is on_failure "continue"
-  ext?: Record<string, unknown>;               // keys the engine does not know, such as `path`
+  on_failure?: 'fail' | 'continue';            // "fail" (default) stops the run; "continue" moves to the next workflow
+  continue_on_error?: boolean;                 // 3.x equivalent: true maps to on_failure: "continue"
+  ext?: Record<string, unknown>;               // Unrecognized keys preserved by the parser (e.g., `path`)
   // ...
 }
 
 interface Task {
-  on_failure?: 'fail' | 'halt' | 'continue';   // "fail" passes to the workflow's policy; "halt" ends the workflow
-  on_rejection?: 'continue' | 'halt';          // a validation that failed its rules; "continue" by default
-  continue_on_error?: boolean;                 // 3.x
-  halt_on?: 'never' | 'failure';               // 3.x
+  on_failure?: 'fail' | 'halt' | 'continue';   // "fail" escalates to workflow policy; "halt" ends current workflow
+  on_rejection?: 'continue' | 'halt';          // Behavior on 4xx rejection (e.g., failed validation); "continue" by default
+  continue_on_error?: boolean;                 // 3.x equivalent
+  halt_on?: 'never' | 'failure';               // 3.x equivalent
   ext?: Record<string, unknown>;
   // ...
 }
 ```
 
-`taskContinuesOnFailure`, `taskHaltsOnFailure` and
-`workflowContinuesOnFailure` read a policy from either spelling. The
-built-in function names and the loop defaults come from the engine
-(`engine_facts()`), not from a list kept here: `validation` is the one
-spelling the badge names, and `validate` renders as a custom function. The
-three 3.x integration configs (`http_call`, `enrich`, `publish_kafka`) left
-the engine; a host that registers them renders them as its own functions.
+Helper functions (`taskContinuesOnFailure`, `taskHaltsOnFailure`, `workflowContinuesOnFailure`) read policies from either 4.0 or 3.x fields, and built-in function metadata is loaded dynamically from `engine_facts()`.
 
 ## Theming
 
-The visualizer supports light, dark, and system themes.
+`WorkflowVisualizer` supports `'light'`, `'dark'`, and `'system'` themes:
 
 ```tsx
 // Light theme
@@ -429,123 +340,95 @@ The visualizer supports light, dark, and system themes.
 <WorkflowVisualizer workflows={workflows} theme="system" />
 ```
 
-### Custom Theme Access
+Access or update the current theme from custom components with `useTheme()`:
 
 ```tsx
 import { useTheme } from '@goplasmatic/dataflow-ui';
 
 function MyComponent() {
   const { theme, setTheme, resolvedTheme } = useTheme();
-  // resolvedTheme is 'light' or 'dark' (resolved from 'system')
+  // resolvedTheme is always 'light' or 'dark'
 }
 ```
 
-## Exports
+## Package Exports
 
 ### Components
 
-| Export | Purpose |
+| Export | Description |
 |--------|---------|
-| `WorkflowVisualizer` | Main visualization component |
-| `TreeView` | Standalone tree view |
-| `RulesListView` | Flat list of workflows |
-| `WorkflowFlowView` | Flow-diagram view of one workflow |
-| `WorkflowCard`, `TaskRow` | Card and row primitives |
-| `FunctionTypeBadge`, `ConditionBadge` | Badges for a task's function and condition |
-| `DebuggerControls` | Playback controls |
-| `IntegratedDebugToolbar` | Toolbar used by `debugConfig` mode |
-| `MessageInputPanel`, `MessageStatePanel` | Debug input and state panels |
-| `DebugInfoBubble`, `DebugStateBadge` | Per-node debug indicators |
-| `JsonViewer`, `SearchInput`, `ErrorBoundary` | Common building blocks |
+| `WorkflowVisualizer` | Main visualization component with optional integrated debugger |
+| `TreeView` | Standalone workflow and task tree view |
+| `RulesListView` | Flat list view of workflows |
+| `WorkflowFlowView` | Interactive flow diagram for a single workflow |
+| `WorkflowCard`, `TaskRow` | Card and row UI primitives |
+| `FunctionTypeBadge`, `ConditionBadge` | Badges displaying a task's function type and condition |
+| `DebuggerControls` | Standalone playback controls |
+| `IntegratedDebugToolbar` | Toolbar used inside `WorkflowVisualizer` debug mode |
+| `MessageInputPanel`, `MessageStatePanel` | Input payload editor and context state inspector panels |
+| `DebugInfoBubble`, `DebugStateBadge` | Per-node execution status indicators |
+| `JsonViewer`, `SearchInput`, `ErrorBoundary` | Shared UI building blocks |
 
-### Providers and hooks
+### Providers and Hooks
 
-| Export | Purpose |
+| Export | Description |
 |--------|---------|
-| `ThemeProvider`, `useTheme` | Theme state and controls |
-| `DebuggerProvider`, `useDebugger` | Debugger state and controls |
-| `useDebuggerOptional` | As `useDebugger`, but returns `null` outside a provider |
-| `useTreeNodeDebugState` | Debug state for any tree node |
-| `useWorkflowDebugState`, `useWorkflowConditionDebugState` | Per-workflow debug state |
-| `useTaskDebugState`, `useTaskConditionDebugState` | Per-task debug state |
+| `ThemeProvider`, `useTheme` | Theme context provider and hook |
+| `DebuggerProvider`, `useDebugger` | Debugger state provider and hook |
+| `useDebuggerOptional` | Same as `useDebugger`, but returns `null` outside a `DebuggerProvider` |
+| `useTreeNodeDebugState` | Debug state hook for any tree node |
+| `useWorkflowDebugState`, `useWorkflowConditionDebugState` | Per-workflow debug state hooks |
+| `useTaskDebugState`, `useTaskConditionDebugState` | Per-task debug state hooks |
 
-### Engine
+### Engine Adapters
 
-| Export | Purpose |
+| Export | Description |
 |--------|---------|
-| `WasmEngineAdapter` | The default engine, over `@goplasmatic/dataflow-wasm`; traces every run unless the options say otherwise |
-| `defaultEngineFactory` | Factory producing `WasmEngineAdapter` |
-| `assertEngineVersion` | Throws when the loaded engine is older than this UI build |
-| `engineFacts` | The loaded engine's facts (the built-in names, the group depth, the loop and fan-out defaults), read once after `init()` |
-| `DataflowEngine`, `EngineFactory` | Types for custom engines |
+| `WasmEngineAdapter` | Default `DataflowEngine` implementation backed by `@goplasmatic/dataflow-wasm` |
+| `defaultEngineFactory` | Factory function returning a `WasmEngineAdapter` |
+| `assertEngineVersion` | Verifies that the loaded WASM module version is compatible with this UI build |
+| `engineFacts` | Cached `engine_facts()` metadata from the WASM module (available after `initWasm()`) |
+| `DataflowEngine`, `EngineFactory` | Interfaces for custom engine implementations |
 
-### Helpers
+### Helpers and Types
 
-Exported alongside the types, for code that walks definitions or traces:
-
-- **Steps:** `isTaskGroup`, `groupMembers`, `flattenSteps`, `countLeafSteps`.
-  A workflow's `tasks` array holds *steps*, so an element may be a task or a
-  nested group. `countLeafSteps` is `flattenSteps(..).length` without the list.
-- **Folders:** `workflowFolderPath`, a workflow's `ext.path` as the engine
-  keeps it, else its `path`
+- **Steps:** `isTaskGroup`, `groupMembers`, `flattenSteps`, `countLeafSteps`
+- **Folders:** `workflowFolderPath`
 - **Functions:** `isBuiltinFunction`, `getFunctionDisplayInfo`
-- **Policies:** `taskContinuesOnFailure`, `taskHaltsOnFailure`,
-  `workflowContinuesOnFailure`
-- **Loops:** `loopBadgeLabel`, `loopGuardLabel`, `loopStepLabel`, `loopDescription`
-- **Fan-out:** `forEachBadgeLabel`, `forEachDescription`
-- **Debug:** `contextAtStep`, `stepState`, `stepErrors`, `isWorkflowStep`,
-  `isEngineStep`, `traceIsReplayable`, `findTaskStepIndex`,
-  `getWorkflowState`, `getTaskState`, `isTaskCurrent`, `toExecutionError`
+- **Policies:** `taskContinuesOnFailure`, `taskHaltsOnFailure`, `workflowContinuesOnFailure`
+- **Loops & Fan-Out:** `loopBadgeLabel`, `loopGuardLabel`, `loopStepLabel`, `loopDescription`, `forEachBadgeLabel`, `forEachDescription`
+- **Debug:** `contextAtStep`, `stepState`, `stepErrors`, `isWorkflowStep`, `isEngineStep`, `traceIsReplayable`, `findTaskStepIndex`, `getWorkflowState`, `getTaskState`, `isTaskCurrent`, `toExecutionError`
+- **Types:** All workflow/task definition types, debugger state types, and re-exported wire types from `@goplasmatic/dataflow-wasm`.
 
-### Types
-
-- **Definitions:** `Workflow`, `Task`, `TaskGroup`, `Step`, `FunctionConfig`,
-  `JsonLogicValue`, `MapMapping`, `MappingItem`, `MapFunctionInput`,
-  `ValidationRule`, `ValidationFunctionInput`, `BuiltinFunctionType`,
-  `LoopConfig`, `ForEach`, `WorkflowStatus`, `Rollout`
-- **The engine's wire types,** re-exported from `@goplasmatic/dataflow-wasm`:
-  `Message`, `Context`, `Change`, `AuditEntry`, `ErrorRecord`, `Trace`,
-  `TraceStep`, `StepResult`, `Run`, `RunStatus`, `WorkflowRecord`,
-  `Selection`, `WorkflowExit`, `DataflowError`, `Issue`, `JsonValue`,
-  `RunOptions`, `TraceOptions`, `AuditMode`, `RunResult`, `EngineError`,
-  `EngineFacts`, `ParseResult`
-- **Debugger:** `DebugConfig`, `DebuggerState`, `DebuggerAction`,
-  `DebugNodeState`, `PlaybackState`, `ExecutionError`, `Theme`,
-  `TreeNodeDebugState`, `WorkflowVisualizerProps`, `TreeSelectionType`,
-  `VisualizerSelection`, `InitialVisualizerSelection`
-
-## From 3.x
+## Migrating from 3.x
 
 | 3.x | 4.0 |
 |---|---|
-| `DataflowEngine.processWithTrace(payload)` | `run(payload, options?)`, resolving with the engine's `RunResult` on every status |
-| `onExecutionComplete(trace: ExecutionTrace)` | `onExecutionComplete(result: RunResult)`; the trace is `result.trace` |
-| `onExecutionError(error: string)` | `onExecutionError(error: ExecutionError)`, with `code`, `message` and `issues` |
-| `ExecutionTrace`, `ExecutionStep` | `Trace`, `TraceStep` from the wasm package |
+| `DataflowEngine.processWithTrace(payload)` | `run(payload, options?)` resolving with `RunResult` on every status |
+| `onExecutionComplete(trace: ExecutionTrace)` | `onExecutionComplete(result: RunResult)` (`result.trace`) |
+| `onExecutionError(error: string)` | `onExecutionError(error: ExecutionError)` with `code`, `message`, and `issues` |
+| `ExecutionTrace`, `ExecutionStep` | `Trace`, `TraceStep` from `@goplasmatic/dataflow-wasm` |
 | `ErrorInfo`, `AuditTrail` | `ErrorRecord`, `AuditEntry` |
-| `getMessageAtStep(trace, i)` | `useDebugger().contextAt(i)` (or `contextAtStep(trace, contexts, i)`): the context, replayed, not a message |
+| `getMessageAtStep(trace, i)` | `useDebugger().contextAt(i)` or `contextAtStep(trace, contexts, i)` (returns the replayed `Context`) |
 | `getChangesAtStep(trace, i)` | `trace.steps[i].changes` |
 | `traceHasSnapshots(trace)` | `traceIsReplayable(trace)` |
 | `createEmptyMessage`, `cloneMessage` | Removed |
-| `INTEGRATION_FUNCTION_NAMES`; `validate`, `http_call`, `enrich`, `publish_kafka` in `BuiltinFunctionType` | Removed; `isBuiltinFunction` reads the engine's `engine_facts()` |
-| The payload sent to the engine as a string | Sent as the object it is |
-
-Debug mode now requires `@goplasmatic/dataflow-wasm` to be initialised even
-with a custom engine, since the trace is replayed through it.
+| `INTEGRATION_FUNCTION_NAMES`; `validate`, `http_call`, `enrich`, `publish_kafka` in `BuiltinFunctionType` | Removed; `isBuiltinFunction` queries `engine_facts()` |
+| Payload serialized as a JSON string | Passed directly as a JavaScript value |
 
 ## Building from Source
 
 ```bash
 cd ui
 npm install
-npm run wasm:local   # build ../wasm and overlay it, when working in this repository
-npm test             # the helpers and a rendered debugger, against that engine
+npm run wasm:local   # build ../wasm and copy it into node_modules
+npm test             # run unit and component tests against the local WASM build
 npm run build:lib
 ```
 
-Output will be in `ui/dist/`.
+Built output is written to `ui/dist/`.
 
 ## Next Steps
 
-- [WASM Package](../wasm/overview.md) - Run workflows in the browser
-- [Core Concepts](../core-concepts/overview.md) - Understand workflows and tasks
+- [WASM Package](../wasm/overview.md) — Run workflows in the browser and Node.js
+- [Core Concepts](../core-concepts/overview.md) — Learn how workflows, tasks, and traces work

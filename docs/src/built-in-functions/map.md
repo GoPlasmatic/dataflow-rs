@@ -1,7 +1,6 @@
 # Map Function
 
-`map` writes the results of JSONLogic expressions to context paths, or
-removes paths. It is the built-in that does the transforming.
+The `map` function evaluates JSONLogic expressions and writes the results to paths in the message context (or removes paths). It is the primary built-in function for data transformation.
 
 ```json
 {
@@ -23,20 +22,19 @@ removes paths. It is the built-in that does the transforming.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `mappings` | array | Yes | The mappings, applied in order |
+| `mappings` | array | Yes | Ordered list of mappings to apply |
 
-### Mapping
+### Mapping Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `path` | string \| JSONLogic | Yes | Where the result is written: a context path, or JSONLogic computing one; see [Paths](#paths) |
-| `logic` | JSONLogic | Unless `unset` | The value to write. A `null` result is skipped; see [Null results](#null-results) |
-| `unset` | boolean | No | `true` removes the key at `path` instead of writing it. Takes no `logic`; see [Removing a path](#removing-a-path) |
-| `on_null` | `"skip"` \| `"unset"` | No | What a `null` result does: `skip` (the default) leaves the path as it was, `unset` removes it |
-| `mode` | `"set"` \| `"append"` \| `"extend"` | No | How a result is written: `set` (the default) assigns it, `append` and `extend` add to the array at `path`; see [Appending to an array](#appending-to-an-array) |
+| `path` | string \| JSONLogic | Yes | Destination path in the context (`data.*`, `metadata.*`, or `temp_data.*`), or a JSONLogic expression that computes one; see [Paths](#paths) |
+| `logic` | JSONLogic | Required unless `unset: true` | Expression computing the value to write. By default, a `null` result is skipped; see [Handling `null` Results](#handling-null-results) |
+| `unset` | boolean | No | When `true`, removes the field at `path` instead of writing a value (cannot be combined with `logic`); see [Removing a Path](#removing-a-path) |
+| `on_null` | `"skip"` \| `"unset"` | No | Behavior when `logic` evaluates to `null`: `"skip"` (default) leaves `path` unchanged; `"unset"` removes `path` |
+| `mode` | `"set"` \| `"append"` \| `"extend"` | No | Write mode: `"set"` (default) assigns the value at `path`; `"append"` and `"extend"` push onto an array at `path`; see [Appending to an Array](#appending-to-an-array) |
 
-Mappings run in order, each against the context as the ones before it left
-it, so a later mapping reads an earlier one's write:
+Mappings execute sequentially in the order they are listed, and each mapping immediately sees the changes made by earlier mappings in the same task:
 
 ```json
 {
@@ -49,8 +47,7 @@ it, so a later mapping reads an earlier one's write:
 
 ## Paths
 
-A path starts at one of the three roots, `data`, `metadata` or `temp_data`,
-and names a key per dot. Missing containers are created on the way:
+Every destination path must start with one of the three context roots (`data`, `metadata`, or `temp_data`). Missing intermediate objects or arrays are created automatically:
 
 ```json
 {"path": "data.user.profile.name", "logic": "John"}
@@ -58,51 +55,45 @@ and names a key per dot. Missing containers are created on the way:
 
 writes `{"data": {"user": {"profile": {"name": "John"}}}}`.
 
-A segment means one thing on an object and another on an array. On an object
-it is a key; on an array a numeric segment is an index, so `data.list.2`
-writes the third element of `data.list`, padding with `null` as needed, and
-creates `data.list` as an array when it is missing:
+### Object Keys vs. Array Indices
 
-```jsonc
-{"path": "data.list.0", "logic": "zero"},
-{"path": "data.list.2", "logic": "two"}
-```
+Path segments behave according to the container they traverse:
+- **On an object:** A segment is treated as an object key.
+- **On an array (or missing container when the next segment is numeric):** A numeric segment is treated as an array index (`0` through `1,048,575`). Writing to `data.list.2` sets the third element of `data.list`, padding any missing earlier elements with `null`:
 
-leaves `data.list` as `["zero", null, "two"]`. To name a key that looks like
-a number, prefix it with `#`: one leading `#` is stripped, and the segment is
-never an index, so
+  ```jsonc
+  {"path": "data.list.0", "logic": "zero"},
+  {"path": "data.list.2", "logic": "two"}
+  ```
 
-```json
-{"path": "data.items.#0", "logic": "first"}
-```
+  produces `data.list = ["zero", null, "two"]`.
+- **Forcing an object key with `#`:** To write a numeric-looking object key instead of an array index, prefix the segment with `#` (one leading `#` is stripped):
 
-writes `{"items": {"0": "first"}}`. A number above 1,048,575 is a key too,
-never an index, so no path can grow an array without bound. A path holds at
-most 64 segments.
+  ```json
+  {"path": "data.items.#0", "logic": "first"}
+  ```
 
-A literal path outside the three roots is refused when the engine is built,
-as `INVALID_PATH` at the mapping's `path`; a path that is not a string, and
-not JSONLogic computing one, is `INPUT_PARSE`.
+  produces `{"items": {"0": "first"}}`.
 
-### Root paths
+Numbers above `1,048,575` are always treated as object keys so a path can never allocate an unbounded array. Paths can have at most 64 segments.
 
-Writing a root merges an object into it:
+Literal paths outside `data`, `metadata`, and `temp_data` are rejected at build time with `INVALID_PATH`.
+
+### Writing to a Context Root
+
+Writing directly to a root (`"path": "data"`, `"metadata"`, or `"temp_data"`) **merges** the returned object's keys into that root:
 
 ```json
 {"path": "data", "logic": {"merged": true}}
 ```
 
-adds `merged` to `data` and keeps the keys already there. The change's
-`new_value` is the object written, `{"merged": true}`, not the root after the
-merge; its `old_value` is the root before it. A root takes only an object: a
-`logic` that is always something else is refused when the engine is built, and
-a result that is not an object fails the mapping when it runs, leaving the
-root as it was.
+adds `"merged": true` to `data` while preserving existing keys in `data`. In the audit trail, `new_value` records the merged object (`{"merged": true}`) and `old_value` records the root prior to the merge.
 
-### Computed destinations
+Root paths only accept JSON objects: if `logic` is a non-object constant, compilation rejects the mapping at build time (`INVALID_MAPPING`); if a dynamic expression evaluates to a non-object at runtime, that mapping fails with `MAPPING_ERROR` and leaves the root unchanged.
 
-`path` is JSONLogic like every other parameter, so one mapping can write
-somewhere different for each message:
+### Dynamic Destination Paths
+
+Because `path` can be a JSONLogic expression, a single mapping can compute its destination path dynamically from the message:
 
 ```json
 {
@@ -111,19 +102,11 @@ somewhere different for each message:
 }
 ```
 
-With `data.id` at `"ACC7"` and `data.amount` at `42`, this writes
-`data.accounts.ACC7.balance = 42`, and the change records that path, not the
-expression. A plain string is JSONLogic for itself, so the static spelling
-folds to a path when the engine is built and costs nothing per message. Only
-a destination that reads the message is evaluated per write.
+When `data.id` is `"ACC7"` and `data.amount` is `42`, this writes `data.accounts.ACC7.balance = 42`, and the audit entry records the resolved path (`"data.accounts.ACC7.balance"`). Static string paths are folded at build time with zero per-message cost.
 
-A computed path is checked when it is evaluated: one that resolves to
-something outside the three roots fails that mapping (the rest still run, and
-the call ends with `500`; see [Failures](#failures)).
+## Expressions (`logic`)
 
-## Expressions
-
-`logic` is JSONLogic evaluated against the context. A few shapes:
+`logic` can be any literal JSON value or JSONLogic expression:
 
 ```json
 {"path": "data.copy", "logic": {"var": "data.original"}}
@@ -158,60 +141,42 @@ the call ends with `500`; see [Failures](#failures)).
 }
 ```
 
-### Literal objects
+### Writing Literal Objects (`$` Escape)
 
-An expression is evaluated in templating mode: a multi-key object is an
-output template, and a single-key object whose key names an operator is that
-operator. Prefix the key with `$` to write it as data:
+`map` evaluates expressions in templating mode: multi-key objects are treated as object templates whose values are evaluated recursively, while a single-key object whose key matches an enabled JSONLogic operator is evaluated as that operator. To write a literal object whose key collides with an operator name (or starts with `$`), prefix the key with `$`:
 
-| `logic` | Writes |
+| `logic` | Value Written |
 |---------|--------|
 | `{"cat": ["a", "b"]}` | `"ab"` |
 | `{"$cat": ["a", "b"]}` | `{"cat": ["a", "b"]}` |
 | `{"$$oid": "x"}` | `{"$oid": "x"}` |
-| `{"result": {"var": "data.n"}}` | `{"result": 600}`, with `data.n` at `600` |
+| `{"result": {"var": "data.n"}}` | `{"result": 600}` (when `data.n` is `600`) |
 
-Exactly one `$` is stripped from every template key, not only from keys that
-collide with an operator, so a key that must start with `$` is doubled. A key
-naming no operator needs no escape: `{"result": …}` is the ordinary single-key
-output template, evaluating its argument. See
-[Literal keys and the `$` escape](../advanced/jsonlogic.md#literal-keys-and-the--escape).
+One leading `$` is stripped from any template key, while single-key objects whose key is *not* an operator (like `{"result": ...}`) require no escape. See [Literal keys and the `$` escape](../advanced/jsonlogic.md#literal-keys-and-the--escape).
 
-### Secrets are refused
+### Secrets Are Not Allowed in `map`
 
-A mapping's result is written to the message, which the engine records, so a
-mapping may not read `{"secret": "name"}`: not in `logic`, not in a computed
-`path`. The definition is refused with `SECRET_IN_MESSAGE_WRITE` at the
-expression. Compute a derived value (an HMAC, a signed URL) in a
-[host function](./host-functions.md), which reads a secret through its own
-config. See [Secrets](../advanced/secrets.md).
+Because `map` writes its output into the `Message` (which is serialized and traced), neither `logic` nor `path` may reference `{"secret": "name"}`—the compiler rejects it at build time with `SECRET_IN_MESSAGE_WRITE`. To compute a value derived from a secret (such as an HMAC signature), use a [custom host function](./host-functions.md). See [Secrets](../advanced/secrets.md).
 
-## Null results
+## Handling `null` Results
 
-A `logic` that evaluates to `null` is skipped: the path keeps whatever it
-held, and no change is recorded.
+By default (`"on_null": "skip"`), if `logic` evaluates to `null`, the mapping is skipped: the target path retains its existing value (or remains absent) and no audit change is recorded:
 
 ```json
 {"path": "data.copy", "logic": {"var": "data.optional"}}
 ```
 
-The skip is what makes `{"if": [cond, value, null]}` mean "set or keep". It
-also means `null` can never clear anything: `"logic": null` is a no-op, kept
-loadable for the installed base and reported as the advisory `NULL_MAPPING`
-(any `logic` that folds to a constant `null` is, under the default
-`on_null`). Removal is explicit.
+This default makes `{"if": [cond, value, null]}` naturally express *"set when `cond` is true, otherwise leave unchanged."* Note that a constant `"logic": null` with the default `on_null` is a no-op and is flagged by `Compiler::check` as a `NULL_MAPPING` advisory.
 
-## Removing a path
+## Removing a Path
 
-`"unset": true` removes the key at `path`. It takes no `logic`:
+To unconditionally delete a field or array element at `path`, set `"unset": true` (with no `logic` key):
 
 ```json
 {"path": "temp_data.retry", "unset": true}
 ```
 
-`"on_null": "unset"` keeps the `logic` and makes a `null` result remove the
-path instead of being skipped, so `{"if": [cond, value, null]}` means "set or
-clear":
+To conditionally delete `path` whenever `logic` evaluates to `null`, keep `logic` and set `"on_null": "unset"`:
 
 ```json
 {
@@ -221,94 +186,75 @@ clear":
 }
 ```
 
-Removing an absent key does nothing and records nothing. A removal that does
-happen records a `Change` with `removed: true` and the old value:
+- Removing a key that is already absent is a no-op and records no audit change.
+- Removing an existing key records a `Change` with `removed: true`, `old_value` set to the removed value, and `new_value: null`:
 
-```json
-{"path": "data.y", "old_value": 2, "new_value": null, "removed": true}
-```
+  ```json
+  {"path": "data.y", "old_value": 2, "new_value": null, "removed": true}
+  ```
 
-An index removes that element and shifts the later ones down: with
-`data.gone` at `["a", "b", "c"]`, `{"path": "data.gone.0", "unset": true}`
-leaves `["b", "c"]`.
+- Removing an array index (such as `{"path": "data.gone.0", "unset": true}`) removes that element and shifts subsequent elements down.
 
-Clearing with `false` is not the same thing. The key stays present, so
-`missing` and `exists` report it, `{"var": ["temp_data.x", "fallback"]}` and
-`??` return `false` rather than the fallback, and the value travels with the
-message. The difference shows most in a [loop](../advanced/loops.md), where
-`temp_data` carries over between sweeps: a per-item slot set with "set or
-keep" still holds the previous item's value in every sweep that does not set
-it. Clear it at the end of the sweep with `unset`, or set it with
-`on_null: "unset"`.
+> **Why use `unset` instead of `false`?** Setting a field to `false` leaves the key present in the object, so `missing` and `exists` report it as present, `{"var": ["temp_data.x", "fallback"]}` and `??` return `false` instead of `"fallback"`, and the key stays in the serialized message. This matters especially in [loops](../advanced/loops.md), where `temp_data` persists across iterations—use `unset: true` or `on_null: "unset"` to clear per-iteration state cleanly.
 
-### The rules between the keys
+### Build-Time Mapping Validation Rules
 
-A mapping that breaks one of these is refused when the engine is built, as
-`INVALID_MAPPING` at the key to change:
+The compiler checks each mapping at build time and reports `INVALID_MAPPING` if any of these rules are violated:
 
-| Rule | Reported at | Means |
+| Rule | Reported Path | Explanation |
 |------|-------------|-------|
-| A mapping has `logic` or `"unset": true` | `logic` | a mapping needs `logic`, or `"unset": true` to remove the path |
-| Never both | `unset` | `unset` removes the path and takes no `logic`; to remove it only when the result is null, keep `logic` and use `"on_null": "unset"` |
-| `on_null` needs `logic` | `on_null` | `on_null` says what a null `logic` result does, and this mapping has no `logic` |
-| `mode` needs `logic` | `mode` | `mode` says how a `logic` result is written, and this mapping has no `logic` |
-| A root cannot be removed | `path` | a context root (`data`, `metadata`, `temp_data`) cannot be removed; remove the keys under it instead |
-| A root cannot be appended to | `path` | a context root (`data`, `metadata`, `temp_data`) is an object and cannot be appended to; name an array under it instead |
-| A root takes only an object | `logic` | a context root (`data`, `metadata`, `temp_data`) takes only an object, and this mapping's logic is always something else; write an object, or name a path under the root |
+| Must have `logic` or `"unset": true` | `logic` | Every mapping must either compute a value with `logic` or remove the path with `"unset": true`. |
+| Cannot set both `logic` and `"unset": true` | `unset` | `unset: true` takes no `logic`. To remove a path when `logic` is `null`, use `"on_null": "unset"` instead. |
+| `on_null` requires `logic` | `on_null` | `on_null` only applies when evaluating `logic`. |
+| `mode` requires `logic` | `mode` | `mode` only applies when writing a `logic` result. |
+| Cannot unset a context root | `path` | Top-level roots (`data`, `metadata`, `temp_data`) cannot be removed; unset specific keys inside them instead. |
+| Cannot append/extend a context root | `path` | Top-level roots are objects, not arrays; specify an array path under a root instead. |
+| Root writes must be objects | `logic` | Writing to `data`, `metadata`, or `temp_data` requires a JSON object. |
 
-Only a literal path names a root here. A computed path that resolves to a
-root fails that mapping when it runs, leaving the root in place.
+## Appending to an Array (`mode: "append"` and `"extend"`)
 
-## Appending to an array
+- **`"mode": "append"`** pushes the evaluated result as a single element onto the end of the array at `path`:
 
-`"mode": "append"` pushes the result onto the array at `path`, in place:
+  ```json
+  {
+      "path": "data.log",
+      "logic": {"turn": {"var": "temp_data.turn"}, "move": {"var": "temp_data.move"}},
+      "mode": "append"
+  }
+  ```
 
-```json
-{
-    "path": "data.log",
-    "logic": {"turn": {"var": "temp_data.turn"}, "move": {"var": "temp_data.move"}},
-    "mode": "append"
-}
-```
+- **`"mode": "extend"`** takes an array result from `logic` and pushes each of its elements onto the array at `path` (for example, `{"logic": [2, 3], "mode": "extend"}` appends two elements rather than a nested array).
 
-`"mode": "extend"` pushes each element of an array result instead, so
-`{"logic": [2, 3], "mode": "extend"}` adds two elements where `append` would
-add one two-element array.
+How `append` and `extend` handle the existing value at `path`:
+- **Missing or `null`:** Creates a new array at `path` containing the appended element(s).
+- **Existing array:** Appends the element(s) in place at the end of the array.
+- **Any other type (object, string, number, boolean):** Fails the mapping with `MAPPING_ERROR` without modifying `path`. (Similarly, `extend` fails if `logic` does not evaluate to an array or `null`.)
 
-What the target may hold:
-
-- missing or `null`: it becomes a new array holding the result;
-- an array: the result is added at the end;
-- anything else: the mapping fails, and the value is not wrapped into an
-  array.
-
-`extend` with a result that is not an array fails the mapping. A `null`
-result follows `on_null` as for any other mapping: skipped by default, or
-removing the path under `on_null: "unset"`.
-
-Each element added records one `Change`, at its index:
+Each appended element records a compact `Change` at its new index (`data.log.0`, `data.log.1`, etc.):
 
 ```jsonc
 {"path": "data.log.0", "old_value": null, "new_value": {"turn": 1}},
 {"path": "data.log.1", "old_value": null, "new_value": {"turn": 2}}
 ```
 
-That is why the modes exist. Rebuilding the array with
-`{"merge": [{"var": "data.log"}, [{"var": "temp_data.entry"}]]}` gives the
-same result, but copies the whole array on every append and records all of
-it, so a [loop](../advanced/loops.md) that accumulates a log pays for the
-square of its length. `append` converts and copies only the new element.
+> **Performance tip:** Always prefer `"mode": "append"` over `{"merge": [{"var": "data.log"}, [item]]}` when accumulating items—especially inside a [loop](../advanced/loops.md). `merge` clones the entire array on every iteration ($O(n^2)$ over $n$ iterations), whereas `append` mutates the array in place and records only the newly added element ($O(1)$ per append).
 
-## Failures
+## Handling Mapping Failures
 
-A mapping fails when its `logic` does not evaluate, when a computed `path`
-does not resolve to a context path, when it would remove or append to a
-root or write one anything but an object, or when it appends to a target
-that is not an array. The failure records `MAPPING_ERROR` on the message's
-errors, its `path` the mapping's destination (`null` when a computed path did
-not resolve) and its message the mapping's index, its destination and why; it
-is also logged. The remaining mappings still run, and the call ends with
-status `500`:
+A mapping fails at runtime if:
+- Its `logic` expression fails to evaluate.
+- A dynamic `path` expression fails to evaluate or resolves outside `data`, `metadata`, and `temp_data`.
+- It attempts to unset, append to, or write a non-object to a context root.
+- It uses `append` / `extend` on a target path that holds a non-array value.
+
+When a mapping fails:
+1. The engine records a `MAPPING_ERROR` on `message.errors()` with `path` set to the mapping's target path and a descriptive message naming the mapping index.
+2. Any remaining mappings in the `map` task **still execute**.
+3. The `map` task finishes with status `500` (which adds a `TASK_STATUS_ERROR` record and triggers the task's `on_failure` policy).
+
+> **Note:** If a mapping exceeds the configured [operation budget](../advanced/jsonlogic.md) (`ops_budget`), the task aborts immediately with `BUDGET_EXCEEDED` without running subsequent mappings.
+
+Example of a partial mapping failure:
 
 ```json
 {
@@ -326,26 +272,11 @@ status `500`:
 }
 ```
 
-With `data.s` at `"str"`, the second mapping fails, `data.a` and `data.c` are
-both written, and the audit entry records `500` with those two changes. The
-message gets two records: `MAPPING_ERROR` at `data.s`, with the text
-`mappings[1] (data.s): the target holds a string, not an array`, then
-`TASK_STATUS_ERROR` with the text `Task t returned status 500`. A mapping
-over the [ops budget](../advanced/jsonlogic.md) is no failed mapping: it
-fails the task with `BUDGET_EXCEEDED`, and the mappings after it do not run.
-Then the task's `on_failure` decides: by
-default the failure reaches the workflow and stops the run, with `TASK_ERROR`
-(`Task t failed with status 500`) as the run's status; with
-`"on_failure": "continue"` on the task the next task runs. See
-[Error Handling](../core-concepts/error-handling.md).
+If `data.s` holds `"str"` (a string rather than an array), mapping `1` fails, while `data.a = 1` and `data.c = 3` are both written. The audit entry records status `500` with those two changes, `message.errors()` receives `MAPPING_ERROR` (for `mappings[1]`) and `TASK_STATUS_ERROR` (for task `t`), and the task's `on_failure` policy decides whether the workflow continues or stops.
 
-## Audit
+## Audit Trail
 
-Every write records a `Change` on the task's audit entry, when the run
-captures changes (on by default): the dotted path written, `old_value`
-(`null` when the path was absent) and `new_value`; `removed: true` on a
-removal. A root write's `new_value` is the object written. See
-[Audit Trails](../advanced/audit-trails.md).
+When `RunOptions::capture_changes` is enabled (the default), every write or removal made by `map` adds a `Change` to the task's `AuditEntry` containing `path`, `old_value`, `new_value`, and `removed`. See [Audit Trails](../advanced/audit-trails.md).
 
 ## Try It
 
@@ -356,10 +287,7 @@ removal. A root write's `new_value` is the object written. See
 
 ## Best Practices
 
-1. **Use `temp_data` for intermediate results**, and `data` for what the
-   message carries out.
-2. **Order matters**: a mapping sees the writes of the mappings before it.
-3. **Handle missing fields** with `if` or `!!`, or let a `null` result skip.
-4. **Write an object at a root**: it merges, and nothing else is accepted.
-5. **Clear with `unset`, not `false` or `null`**: `null` is skipped and
-   `false` is a value; only `unset` makes a path absent.
+1. **Use `temp_data` for Intermediate Values** — Keep temporary calculations in `temp_data` and write final outputs to `data`.
+2. **Order Mappings Intentionally** — Later mappings in the same task can read fields written by earlier mappings.
+3. **Use `unset` to Delete Keys** — Remember that `null` results are skipped by default (`on_null: "skip"`) and `false` keeps the key present; use `"unset": true` or `"on_null": "unset"` to remove a field.
+4. **Use `"mode": "append"` for Growing Arrays** — Avoid cloning arrays with `merge` inside loops.

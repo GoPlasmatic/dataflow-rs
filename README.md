@@ -25,9 +25,9 @@
 Dataflow-rs is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. The builder compiles every rule's JSONLogic once at build time, so runs skip parsing and execute host functions on Tokio. Use it to route events, validate data, or build multi-step automation pipelines.
 
 ### ⚡ Performance
-Dataflow-rs targets high-throughput hot paths. The builder compiles every expression, task config, and write path once at build time. A run evaluates against one view of the message and reads the clock once.
+Dataflow-rs is designed for high-throughput workloads. The builder compiles every expression, task config, and write path once at build time. At runtime, each message is evaluated against a single context view with only one clock read.
 
-In the 4.0 release gate against 3.15.0, the benchmark harness scored 16 of 49 metrics faster, 25 better, and 6 equal, while the two remaining metrics matched at seven rounds. `loop_scaling`, a 1000-sweep append loop over a large context, finished in 1 to 3% of 3.15's time. See [Performance](#performance) for the benchmark methodology and commands.
+In the 4.0 release benchmarks against 3.15.0, 16 of 49 metrics were faster, 25 improved, 6 were equal, and the remaining 2 matched across seven rounds. `loop_scaling` (a 1,000-iteration append loop over a large context) finished in 1–3% of the 3.15 runtime. See [Performance](#performance) for the benchmark methodology and commands.
 
 ### 🧩 Full-Stack Ecosystem
 Run the same rule definitions across your stack:
@@ -171,9 +171,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }]
     });
 
-    // Build the engine: every expression compiles here. A definition that
-    // does not compile is refused with its issues, each at the path the
-    // author typed, so nothing fails on the first message.
+    // Build the engine: every expression compiles here. Invalid definitions
+    // are rejected with detailed issues pointing to the exact JSON path,
+    // so errors are caught at startup rather than on the first message.
     let engine = Engine::builder()
         .workflow_json(&intake)
         .workflow_json(&premium)
@@ -181,7 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|issues| format!("definitions rejected: {issues:#?}"))?;
 
     // Run a message. `from_json` sets the *payload*; `parse_json` in the
-    // first rule is what lands it in `data`.
+    // first rule copies it into `data`.
     let mut message = Message::from_json(&json!({"total": 1500}));
     let run = engine.run(&mut message).await;
 
@@ -268,10 +268,10 @@ the next task unless you set `"on_rejection": "halt"`. See the
 
 ### Branching on Task Failures
 
-Both error channels live on the host side. Rule conditions evaluate against
-`data`, `metadata`, and `temp_data`, which do not include `message.errors()`.
-Configure an `ErrorContext` path and the engine mirrors each failure's code into
-the context as it occurs:
+Both error channels live on the host side in Rust. Rule conditions evaluate against
+`data`, `metadata`, and `temp_data`, which do not include `message.errors()` by default.
+If you configure an `ErrorContext` path, the engine mirrors each failure's code into
+the message context as it occurs so later rules can branch on it:
 
 ```rust
 use dataflow_rs::run::{EngineConfig, ErrorContext};
@@ -376,26 +376,26 @@ receives inline events, and `Trace` records step diffs when requested.
 ## Performance
 
 Key design choices keep per-message overhead low:
-- **Compile at Build:** The builder compiles expressions, folds constants, and pre-splits write paths ahead of time, so a run does no parsing.
-- **One View per Run:** Built-in tasks evaluate against a single arena view of the context and splice writes in place.
-- **Overlay Writes:** Host function writes land in a per-call overlay that the function can read immediately; the engine replays them into the context when the call returns `Ok`.
-- **Zero-Cost When Unwatched:** A run reads the clock once. Observer and trace work runs only when attached; the unwatched path adds a single branch per call.
-- **Async I/O:** Host functions run on Tokio without blocking, and fan-outs run calls concurrently without spawning tasks.
+- **Compile at Build:** The builder compiles expressions, folds constants, and pre-splits write paths ahead of time, so runs do no parsing.
+- **Single Context View:** Built-in tasks evaluate against a single arena view of the context and apply writes in place.
+- **Transactional Overlay Writes:** Host function writes go to a per-call overlay that the function can read immediately; the engine commits them to the context only when the call returns `Ok`.
+- **Zero-Cost When Unwatched:** A standard run reads the system clock once. Observer and trace work runs only when enabled, adding just a single branch per call when disabled.
+- **Async I/O:** Host functions run on Tokio without blocking, and fan-outs run calls concurrently without spawning extra tasks.
 
-In the 4.0 release gate against 3.15.0, 16 of 49 metrics scored faster, 25
-better, and 6 equal, while the two `micro_subtree_write_bench` rows matched at
-seven rounds. `loop_scaling` ran in 1 to 3% of 3.15's time. `bench/gate.py`
+In the 4.0 release benchmarks against 3.15.0, 16 of 49 metrics were faster, 25
+improved, and 6 were equal, while the two `micro_subtree_write_bench` rows matched across
+seven rounds. `loop_scaling` ran in 1–3% of the 3.15 runtime. `bench/gate.py`
 compares a base commit against a candidate by alternating both builds within
-each round and judging the median per-round ratio against a noise floor of 3%
-or half the inter-quartile range.
+each round and comparing the median per-round ratio against a 3% noise floor
+(or half the interquartile range).
 
-**Tuning tip:** If you do not read audit trails, pass
-`RunOptions::default().capture_changes(false)` or keep only recent entries
-with `.audit(AuditMode::Last(n))`. Skipping per-write old and new value copies
-gives the largest savings in mapping-heavy and looping workflows. See the
+**Tuning tip:** If you do not inspect audit trails, pass
+`RunOptions::default().capture_changes(false)` or retain only recent entries
+with `.audit(AuditMode::Last(n))`. Skipping old/new value snapshots on every write
+provides the largest speedup in mapping-heavy and looping workflows. See the
 [performance guide](docs/src/advanced/performance.md).
 
-Run benchmarks with `--release`. The crate includes thirteen benchmark examples
+Always run benchmarks with `--release`. The crate includes 13 benchmark examples
 (listed in [CONTRIBUTING.md](CONTRIBUTING.md#benchmarks)), and each verifies
 its output before timing:
 
@@ -406,13 +406,13 @@ cargo run --example loop_scaling --release             # 1000-sweep append loop 
 cargo run --example async_handler_benchmark --release  # Marginal cost of one host function call
 ```
 
-Runs vary by 2 to 3%. Compare the mean of three or more interleaved A/B runs.
+Results typically vary by 2–3% between runs. Compare the average of three or more interleaved A/B runs.
 
 ## Custom Functions
 
-Extend the engine with your own async actions. A function declares a typed
-`Config`, compiled once when the engine is built, receives a `Ctx` whose
-writes record audit-trail changes for you, and returns an `Outcome`:
+Extend the engine with your own async actions. A custom function declares a typed
+`Config` (compiled once when the engine is built), receives a `Ctx` (which automatically
+records audit-trail changes for your writes), and returns an `Outcome`:
 
 ```rust
 use dataflow_rs::datavalue::OwnedDataValue;
@@ -422,13 +422,13 @@ use dataflow_rs::run::RunStatus;
 use dataflow_rs::{Ctx, Engine, Expr, Function, Message, Outcome, Result};
 use serde_json::{Value, json};
 
-/// The task's `input`, compiled once when the engine is built. A malformed
-/// one is refused there, with an issue at its key, not on the first message.
+/// The task's `input`, compiled once when the engine is built. Invalid
+/// configs are rejected at build time with an issue pointing to the field.
 #[derive(FunctionConfig)]
 struct NotifyConfig {
-    /// Authored as a literal or as JSONLogic over the message.
+    /// Can be written as a static literal or a JSONLogic expression.
     channel: Expr<String>,
-    /// Where the result is written. The author may override the default.
+    /// Destination path where the result is written (can be overridden in JSON).
     #[output(default = "data.notification")]
     output: Output,
 }
@@ -440,16 +440,16 @@ impl Function for NotifyManager {
 
     async fn call(&self, ctx: &mut Ctx<'_>, cfg: &NotifyConfig) -> Result<Outcome> {
         let channel = ctx.eval(&cfg.channel)?;
-        // Your async work here: an HTTP call, a queue write, ...
+        // Perform your async work here (e.g., an HTTP request or queue write).
         let receipt = OwnedDataValue::from(&json!({"channel": &*channel, "sent": true}));
-        ctx.emit_default(receipt)?; // writes through `output`
+        ctx.emit_default(receipt)?; // writes to `output`
         Ok(Outcome::Ok)
     }
 }
 
 #[tokio::main]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-    // Register functions on the builder; a task names one by its registered name.
+    // Register custom functions on the builder by name.
     let engine = Engine::builder()
         .register("notify_manager", NotifyManager)
         .workflow_json(&json!({
@@ -474,30 +474,22 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let data = Value::from(message.context().data());
     assert_eq!(data["notification"]["channel"], "orders-eu");
 
-    // Unit-test one call without a workflow: the config compiles as a
-    // workflow would compile it, and the call settles as a run settles it.
+    // Unit-test a single call without building a full workflow.
     let called = testing::call(NotifyManager, json!({"channel": "orders"})).await;
     assert_eq!(called.outcome?, Outcome::Ok);
-    assert_eq!(called.writes.len(), 1); // one write, at `data.notification`
+    assert_eq!(called.writes.len(), 1); // one write at `data.notification`
     Ok(())
 }
 ```
 
-`Outcome::Ok` records status `200`; `Outcome::Status(n)` records `n`, a `4xx`
-being a rejection and a `5xx` a failure for the task's policies; `Skip`
-records no entry; `Halt` records `299` and ends the rest of the workflow. A
-call's writes reach the message only when it returns `Ok`: an `Err` drops them
-whole, so a function never leaves a half-written message behind.
+- `Outcome::Ok` records status `200`.
+- `Outcome::Status(n)` records status `n` (`4xx` is treated as a rejection and `5xx` as a failure under the task's policies).
+- `Outcome::Skip` skips the task without recording an audit entry.
+- `Outcome::Halt` records status `299` and stops the rest of the current workflow.
 
-Every config field is JSONLogic, and the static spelling is free: a JSON
-literal *is* JSONLogic for itself, so `"channel": "orders"` folds to a
-constant at build time and costs nothing per message. `Expr<T>` is a field
-the function evaluates (`T` fixes the result type), `Output` a destination it
-writes through, and `#[config(default = ...)]` an authored default. One catch:
-a single-key object whose key names an operator is that operator, so write
-`{"$cat": ...}` for the literal object. See
-[Custom Functions](docs/src/advanced/custom-functions.md) and
-[Literal keys and the `$` escape](docs/src/advanced/jsonlogic.md).
+A function call's writes are committed to the message only when `call` returns `Ok`. Returning `Err` discards all writes from that call, ensuring a failed function never leaves partial changes behind.
+
+Every `Expr<T>` config field accepts either a static JSON literal or a JSONLogic expression. Because any JSON literal is valid JSONLogic for itself, static values like `"channel": "orders"` are folded to constants at build time with zero runtime overhead. Use `Expr<T>` for fields your function evaluates, `Output` for destination paths your function writes to, and `#[config(default = ...)]` for optional fields with default values. Note that a single-key object whose key matches a JSONLogic operator is parsed as that operator—prefix the key with `$` (for example, `{"$cat": ...}`) when you want a literal object. See [Custom Functions](docs/src/advanced/custom-functions.md) and [Literal keys and the `$` escape](docs/src/advanced/jsonlogic.md).
 
 ## Built-in Functions
 
@@ -512,8 +504,7 @@ a single-key object whose key names an operator is that operator, so write
 | `publish_json` | Serialize data to JSON string | Yes |
 | `publish_xml` | Serialize data to XML string | Yes |
 
-The eight run inline, on the run's own view of the context, so a task calling
-one cannot carry `for_each`; their names are reserved.
+All eight built-in functions run inline on the engine's context view. Their names are reserved, and tasks that call them cannot use `for_each`.
 
 ### Filter (Pipeline Control Flow)
 
@@ -558,26 +549,26 @@ Log levels: `trace`, `debug`, `info`, `warn`, `error`. Messages and fields suppo
 
 ## Channel Routing
 
-Workflows name a channel (`{ "id": "order_rule", "channel": "orders", ... }`),
-and a run can take only that channel's workflows:
+Workflows can specify a channel (`{ "id": "order_rule", "channel": "orders", ... }`),
+allowing a run to execute only the workflows assigned to that channel:
 
 ```rust
 use dataflow_rs::{Engine, Message, Run, RunOptions};
 
-/// Runs only the Active workflows of the `orders` channel.
+/// Runs only the Active workflows in the `orders` channel.
 async fn run_orders(engine: &Engine, message: &mut Message) -> Run {
     let opts = RunOptions::default().channel("orders");
     engine.run_with(message, &opts).await
 }
 ```
 
-Only `active` workflows run, with or without a channel. Workflows default to
-the `"default"` channel, and the run stamps `metadata.channel` when it was
-started on one.
+Only `active` workflows run, whether or not a channel filter is set. Workflows default to
+the `"default"` channel, and the engine writes the selected channel to `metadata.channel` when
+started with one.
 
 ## Workflow Lifecycle
 
-Workflows support lifecycle management fields:
+Workflows support optional metadata and lifecycle fields:
 
 ```jsonc
 {
@@ -594,7 +585,7 @@ Workflows support lifecycle management fields:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `priority` | number | `0` | Run order: lower runs first, equal priorities keep their order |
+| `priority` | number | `0` | Execution order: lower numbers run first; ties preserve definition order |
 | `channel` | string | `"default"` | Channel for message routing |
 | `version` | number | `1` | Workflow version |
 | `status` | string | `"active"` | `active`, `paused`, or `archived` |
@@ -603,12 +594,12 @@ Workflows support lifecycle management fields:
 | `created_at` | datetime | `null` | Creation timestamp (ISO 8601) |
 | `updated_at` | datetime | `null` | Last update timestamp (ISO 8601) |
 
-All fields are optional. Unknown keys move into the node's `ext` map and produce an issue report.
+All fields are optional. Unrecognized keys are preserved in the node's `ext` map and reported as an issue.
 
 ## Traffic Splits (Canary Rollouts)
 
-Give a workflow a slice of its channel's traffic with a half-open bucket range
-over `0..100`, so a new version can roll out gradually alongside the old one:
+Assign a workflow a percentage of its channel's traffic using a half-open bucket range
+over `0..100` so you can roll out a new version gradually alongside the existing one:
 
 ```jsonc
 {
@@ -619,12 +610,11 @@ over `0..100`, so a new version can roll out gradually alongside the old one:
 }
 ```
 
-That workflow serves buckets `0..=9`, 10% of traffic. `bucket_start` is
-inclusive and `bucket_end` exclusive, so a `{"bucket_start": 10, "bucket_end": 100}`
-sibling covers the remaining 90% with no overlap and no gap.
+This workflow handles buckets `0..=9` (10% of traffic). Because `bucket_start` is
+inclusive and `bucket_end` is exclusive, a sibling workflow with `{"bucket_start": 10, "bucket_end": 100}`
+covers the remaining 90% without overlap or gaps.
 
-The engine does not derive the bucket. Set it per run with your own policy
-(a sticky hash of a user id, a random draw, round-robin):
+You choose how to compute the bucket for each run (for example, hashing a user ID, random sampling, or round-robin):
 
 ```rust
 use dataflow_rs::{Engine, Message, Run, RunOptions};
@@ -635,17 +625,11 @@ async fn run_checkout(engine: &Engine, message: &mut Message, bucket: u8) -> Run
 }
 ```
 
-Every workflow, split or not, admits a run with no bucket, so every caller
-that predates rollouts keeps working unchanged. The engine skips an excluded
-workflow before any other per-message work, and the `Run` records it as
-`SkippedByRollout`.
+If a run does not specify a `routing_bucket`, all workflows match regardless of their `rollout` configuration, so existing callers continue working unchanged. Workflows excluded by a rollout bucket are skipped before condition evaluation and recorded in `Run` as `SkippedByRollout`.
 
 ## Secrets
 
-A signing key or partner token has to be readable by a condition and must never
-appear in a trace. The message context cannot express that, because everything
-in it is recorded. Secrets therefore live in a store on the expression engine,
-and expressions read them through one reserved operator:
+Sensitive values like signing keys or partner tokens often need to be checked in conditions without ever appearing in logs, traces, or serialized messages. Because everything inside `Message` can be serialized or traced, secrets live in a separate store on the expression engine and are read through the `{"secret": "name"}` operator:
 
 ```rust
 use dataflow_rs::datavalue::OwnedDataValue;
@@ -673,27 +657,19 @@ fn build_engine() -> Result<Engine, Box<dyn std::error::Error>> {
 }
 ```
 
-The value never enters a `Message`, so it cannot appear in anything derived
-from one. `build()` refuses a `map` mapping or `log` expression that reads a
-secret (`SECRET_IN_MESSAGE_WRITE`), and a name the store does not declare
-(`UNKNOWN_SECRET`). A host function reads one through `Ctx::secret` or an
-`Expr` field, and a layer's view of its config shows that field as `null`.
-Derived values such as an HMAC belong in such a function. See the
-[Secrets](docs/src/advanced/secrets.md) page.
+Secret values never enter a `Message`, so they cannot leak into anything derived from one. At build time, `build()` rejects any `map` mapping or `log` expression that references a secret (`SECRET_IN_MESSAGE_WRITE`), as well as any secret name missing from the store (`UNKNOWN_SECRET`). Custom host functions can read secrets via `Ctx::secret` or an `Expr` config field (which middleware layers see redacted as `null`). If you need to compute a value derived from a secret (such as an HMAC signature), do so inside a custom host function. See [Secrets](docs/src/advanced/secrets.md) for details.
 
 ## Reloading Definitions
 
-An `Engine` is a program plus its config, behind an `Arc`. To reload, compile
-the new definitions with the engine's own compiler, which shares its
-functions, operators and secrets, and swap the program:
+An `Engine` holds its compiled program and configuration behind an `Arc`. To hot-reload workflows, compile the new definitions using `engine.compiler()`—which reuses the registered functions, operators, and secrets—and swap in the new program with `with_program`:
 
 ```rust
 use dataflow_rs::Engine;
 use dataflow_rs::def::{ParseOptions, parse};
 use serde_json::Value;
 
-/// An engine running `definition` in place of this one's program. `engine`
-/// is unchanged, and keeps serving any message in flight.
+/// Returns a new `Engine` running `definition`. The original `engine`
+/// is unchanged and continues serving any in-flight messages.
 fn reload(engine: &Engine, definition: &Value) -> Result<Engine, Box<dyn std::error::Error>> {
     let compiler = engine.compiler();
     let parsed = parse(definition, ParseOptions::default());
@@ -703,17 +679,11 @@ fn reload(engine: &Engine, definition: &Value) -> Result<Engine, Box<dyn std::er
 }
 ```
 
-Each workflow compiles on its own, so a host that quarantines keeps the ones
-that compile and reports the rest. `Compiler::check` gives every issue of a
-definition, Advisories included, for an editor's pre-save screen.
+Because each workflow compiles independently, you can quarantine invalid workflows while still loading valid ones. You can also call `Compiler::check` to collect all issues (including advisories) for pre-save validation in an editor.
 
 ## Execution Tracing & Observability
 
-Ask a run for a trace and the `Run` carries one: the context after the run's
-stamps, then one step per call, skip and failure with the changes it made.
-Replaying the changes gives the context after every step, so a trace is a
-step debugger's input without a message snapshot per task. `TraceOptions`
-bound it up front: timings, changes, path redaction and a byte budget.
+Enable tracing on a run via `RunOptions::trace`, and the returned `Run` will include a `Trace` containing the initial context followed by a step record for every task execution, skip, or failure along with its exact context changes. By replaying those changes, you can reconstruct the message context after any step without paying the memory cost of full message snapshots. `TraceOptions` lets you configure timings, change capture, path redaction, and a maximum byte budget.
 
 ```rust
 use dataflow_rs::observe::TraceOptions;
@@ -728,18 +698,16 @@ async fn inspect(engine: &Engine, message: &mut Message) -> Result<(), Box<dyn s
         println!("{}/{:?}: {:?} in {:?}", step.workflow_id, step.task_id, step.result, step.elapsed);
     }
 
-    // The context after each step, replayed from `trace.initial`. The last one
-    // is the message's context, on every status, unless the byte budget was
-    // crossed (`trace.truncated`).
+    // Reconstruct the context after each step from `trace.initial`. The final
+    // context matches `message.context()` unless the byte budget was exceeded
+    // (`trace.truncated`).
     let after_last = trace.contexts().last();
     assert_eq!(after_last.as_ref(), Some(message.context()));
     Ok(())
 }
 ```
 
-For always-on aggregation instead of a per-request trace, attach an
-`Observer`. It is called inline, once per task, built-ins included, and its
-`Interest` says which events it wants: without `TIMINGS` no clock is read.
+For lightweight, always-on metrics rather than per-request traces, attach an `Observer`. It is invoked synchronously for every task (including built-ins), and its `Interest` flags control which events it receives—if `Interest::TIMINGS` is not requested, the engine skips per-task clock reads.
 
 ```rust
 use dataflow_rs::observe::{Event, Interest, Observer};
@@ -760,28 +728,26 @@ impl Observer for Metrics {
     }
 
     fn on(&self, event: &Event<'_>) {
-        // Runs synchronously on the run: must be cheap and non-blocking.
+        // Runs synchronously on the execution path: keep it fast and non-blocking.
         if let Event::TaskFinished { info, elapsed, .. } = event {
             self.calls.fetch_add(1, Ordering::Relaxed);
-            let _ = (info.function, elapsed); // feed a histogram here
+            let _ = (info.function, elapsed); // record to a histogram here
         }
     }
 }
 
-/// An engine over `definitions` that reports every run to `metrics`.
+/// Builds an engine over `definitions` that reports every run to `metrics`.
 fn build(definitions: &[Value], metrics: Arc<Metrics>) -> Result<Engine, Vec<Issue>> {
     let builder = Engine::builder().config(EngineConfig::default().observer(metrics));
     definitions.iter().fold(builder, |b, d| b.workflow_json(d)).build()
 }
 ```
 
-`RunOptions::observer` attaches one to a single run instead. With neither an
-observer nor a trace attached, their costs, clock reads included, stay out of
-the dispatch path.
+You can also attach an observer to a single run with `RunOptions::observer`. When neither an observer nor a trace is active, there is no observability or timing overhead on the execution path.
 
 ## Visualize & Debug Rules
 
-Because every rule is plain JSON, the [React UI](https://www.npmjs.com/package/@goplasmatic/dataflow-ui) can render it: JSONLogic expressions become readable flow diagrams, and the debugger runs a message through the engine and steps through its trace, rebuilding the context after every task from the trace's changes. A run that stops shows its status and the step that failed.
+Because rules are standard JSON, the [React UI](https://www.npmjs.com/package/@goplasmatic/dataflow-ui) can render them directly: JSONLogic expressions are displayed as interactive flow diagrams, and the visual debugger runs messages through the engine and steps through traces by replaying context changes at each task. If a run fails or stops early, the debugger highlights the status and the failing step.
 
 <div align="center">
   <a href="https://goplasmatic.github.io/dataflow-rs/debugger/">
@@ -793,10 +759,10 @@ Because every rule is plain JSON, the [React UI](https://www.npmjs.com/package/@
 
 | Package | Description | Install |
 |---------|-------------|-------|
-| [dataflow-rs](https://crates.io/crates/dataflow-rs) | The rules engine in Rust (this crate) | `cargo add dataflow-rs` |
-| [@goplasmatic/dataflow-wasm](https://www.npmjs.com/package/@goplasmatic/dataflow-wasm) | The engine for the browser and Node: one `WasmEngine`, whose `run(payload, options)` resolves with the message, the run and a trace on every status, typed end to end | `npm i @goplasmatic/dataflow-wasm` |
-| [@goplasmatic/dataflow-ui](https://www.npmjs.com/package/@goplasmatic/dataflow-ui) | React components for rule visualization, editing, and step-by-step debugging over the engine's traces | `npm i @goplasmatic/dataflow-ui` |
-| [datalogic-rs](https://crates.io/crates/datalogic-rs) | JSONLogic compiler/evaluator used internally | `cargo add datalogic-rs` |
+| [dataflow-rs](https://crates.io/crates/dataflow-rs) | Core rules engine in Rust (this crate) | `cargo add dataflow-rs` |
+| [@goplasmatic/dataflow-wasm](https://www.npmjs.com/package/@goplasmatic/dataflow-wasm) | WebAssembly bindings for browsers and Node.js with end-to-end TypeScript types | `npm i @goplasmatic/dataflow-wasm` |
+| [@goplasmatic/dataflow-ui](https://www.npmjs.com/package/@goplasmatic/dataflow-ui) | React components for rule visualization, editing, and step-by-step trace debugging | `npm i @goplasmatic/dataflow-ui` |
+| [datalogic-rs](https://crates.io/crates/datalogic-rs) | JSONLogic compiler and evaluator used internally | `cargo add datalogic-rs` |
 
 📖 **Documentation:** [User Guide & API Reference](https://goplasmatic.github.io/dataflow-rs/) · [Interactive Playground](https://goplasmatic.github.io/dataflow-rs/playground.html) · [Visual Debugger](https://goplasmatic.github.io/dataflow-rs/debugger/)
 

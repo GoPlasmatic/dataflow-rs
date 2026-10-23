@@ -1,33 +1,33 @@
 # Authoring-Time Validation
 
-A service that *stores* definitions (accepting them from an API, holding
-them in a database, building one engine over many rows) wants to know what
-is wrong with a definition when it is submitted, not when the engine is
-next built. Two stages answer that, and both report every problem at the
-path the author typed:
+Services that accept workflow definitions from an API or store them in a
+database need to validate definitions as soon as they are submitted—rather than
+waiting until the engine is next rebuilt. Dataflow-rs provides two validation
+stages, both of which report every issue at the exact JSON path where it was
+written:
 
-1. **`def::parse`** reads the JSON into a `WorkflowDef` and is the linter:
-   every structural rule, every unknown key, every 3.x spelling.
-2. **`Compiler`** compiles a parsed definition against a registry: does
-   every task name a function this engine has, does every config compile,
-   does every expression pass the checks.
+1. **`def::parse`** parses the JSON into a `WorkflowDef` and checks all
+   structural rules, unknown keys, and 3.x compatibility spellings.
+2. **`Compiler`** compiles a parsed `WorkflowDef` against a `Registry`, checking
+   that every task references a registered function, every function input
+   compiles cleanly, and every JSONLogic expression passes static checks.
 
-`Engine::builder().build()` runs both and fails if any definition is
-rejected. That is right for a host with a fixed set of workflows; a host
-that quarantines bad rows and runs the rest uses the two stages directly.
+`Engine::builder().build()` runs both stages automatically and fails if any
+definition is rejected. That works well when your application loads a fixed set
+of workflows at startup. If your application loads workflows dynamically from a
+database and needs to quarantine invalid definitions while running the valid
+ones, call `def::parse` and `Compiler` directly.
 
-## Parsing a definition
+## Parsing a Definition (`def::parse`)
 
-If the caller already owns the JSON `Value`, `def::parse_owned(value, options)`
-rewrites compatibility spellings in place instead of copying the whole
-document. It returns the same definition and ordered issues as `parse`.
-`EngineBuilder::workflow_json_owned(value)` uses this path too; the borrowed
-`parse` and `workflow_json` methods remain available.
+`def::parse` reads a single workflow JSON value into a `WorkflowDef` and lints
+its structure, unknown keys, and 3.x spellings. It returns a `Parsed` struct
+containing all discovered `issues`, and sets `def` to `Some(WorkflowDef)` when
+no issue has `Rejected` severity.
 
-`def::parse` reads one definition into a `WorkflowDef` and lints its structure,
-unknown keys, and 3.x spellings. `parse` always returns a `Parsed` struct containing
-all discovered `issues`, and sets `def` to `Some` when no issue has `Rejected`
-severity:
+If you already own the `serde_json::Value`, use `def::parse_owned(value, options)`
+(or `EngineBuilder::workflow_json_owned(value)`), which rewrites 3.x
+compatibility spellings in place without cloning the document.
 
 ```rust
 use dataflow_rs::def::{ParseOptions, parse};
@@ -45,13 +45,14 @@ let submitted = json!({
 let parsed = parse(&submitted, ParseOptions::default());
 assert!(parsed.def.is_none());
 
-// Both problems, not just the first.
+// Reports all problems in a single pass, not just the first one encountered.
 let codes: Vec<IssueCode> = parsed.issues.iter().map(|i| i.code).collect();
 assert_eq!(codes, [IssueCode::EmptyWorkflowId, IssueCode::DuplicateStepId]);
 ```
 
-Each issue carries the coordinate the author typed, so a `400` can point at
-the exact field, and the step it sits in:
+Each `Issue` includes the exact authored path in the submitted JSON and the step
+where the problem occurred, making it easy to return detailed `400 Bad Request`
+responses:
 
 ```rust
 # use dataflow_rs::def::{ParseOptions, parse};
@@ -75,78 +76,79 @@ assert_eq!(issue.step_kind, Some(StepKind::Task));
 assert_eq!(issue.step_id.as_deref(), Some("first"));
 ```
 
-The path is `tasks[1].tasks[0].id`, where the author wrote it. The
-definition keeps the authored tree (`WorkflowDef::walk` yields it in the
-same coordinates), so nothing is ever reported at a flattened index.
+Notice that `issue.path` is `tasks[1].tasks[0].id`—matching the nested structure
+in the submitted JSON (`WorkflowDef::walk` uses the same coordinates) rather
+than a flattened task index. Missing or mistyped fields are reported as
+`PARSE_FAILED` at their exact path with a message explaining what was expected.
 
-A missing or ill-typed key is `PARSE_FAILED` at its own path, carrying what
-was expected, so a host needs no round-trip check of its own as a safety
-net.
+### `Issue` Fields
 
-### What an issue carries
-
-| Field | Holds |
+| Field | Description |
 |---|---|
-| `code` | An `IssueCode`; `as_str()` is its stable `SCREAMING_SNAKE` form |
-| `severity` | `Rejected`, `Defect` or `Advisory`: the code's own, unless overridden |
-| `path` | An `AuthoredPath` into the submitted JSON, `tasks[1].tasks[0].id` |
-| `step_kind`, `step_id` | The step it sits in: a `task`, a `group`, or a `setup` step under `loop.setup` |
-| `field` | Inside a config, the first key under `function.input` |
-| `message` | What is wrong, in words |
+| `code` | The `IssueCode` (`as_str()` returns its stable `SCREAMING_SNAKE_CASE` identifier). |
+| `severity` | `Rejected`, `Defect`, or `Advisory`. |
+| `path` | The `AuthoredPath` in the submitted JSON (e.g., `tasks[1].tasks[0].id`). |
+| `step_kind`, `step_id` | The enclosing step (`task`, `group`, or `setup` under `loop.setup`). |
+| `field` | For function input issues, the top-level field name inside `function.input`. |
+| `message` | Human-readable explanation of the issue. |
 
-An `Issue` serializes as an object of those seven fields, the code and
-severity as their strings and the path as it displays, and `Display`
-renders `tasks[0].id: every step needs a non-empty id [MISSING_STEP_ID]`.
+`Issue` serializes to a JSON object with these seven fields, and its `Display`
+implementation formats as
+`tasks[0].id: every step needs a non-empty id [MISSING_STEP_ID]`.
 
-## Severity
+## Issue Severity
 
-Not every issue is a refusal. `Severity` says when an issue bites, and
-`IssueCode::severity()` gives each code's default:
+Not every issue prevents a workflow from loading. `Severity` categorizes issues
+into three levels, and `IssueCode::severity()` returns the default severity for
+each code:
 
 ```rust
 use dataflow_rs::program::{IssueCode, Severity};
 
-// Reported, and the workflow loads and runs.
+// Advisory: reported for review, and the workflow loads and runs normally.
 assert_eq!(IssueCode::UnguardedValidation.severity(), Severity::Advisory);
-// Loads, then does not do what it says.
+// Defect: loads, but will likely fail or misbehave when processing messages.
 assert_eq!(IssueCode::LikelyTypo.severity(), Severity::Defect);
-// Never loads.
+// Rejected: invalid definition; cannot be loaded or compiled.
 assert_eq!(IssueCode::DuplicateStepId.severity(), Severity::Rejected);
 
 assert_eq!(IssueCode::DuplicateStepId.as_str(), "DUPLICATE_STEP_ID");
 assert_eq!(Severity::Defect.as_str(), "DEFECT");
 ```
 
-- **Rejected**: the definition never runs. `parse` gives no `def`, or the
-  compiler gives no workflow.
-- **Defect**: it loads, then fails or misbehaves on messages. A near miss of
-  a known key (`LIKELY_TYPO`), a `var` reading the payload (`PAYLOAD_VAR`),
-  a connector no deployment declares (`UNRESOLVED_REFERENCE`). A host
-  screening on "would this build" alone waves these through.
-- **Advisory**: it loads and runs; the shape deserves an author's attention.
+- **`Rejected`**: The workflow definition is invalid and cannot run (`parse`
+  returns `def: None`, or `Compiler::compile_one` returns `Err`).
+- **`Defect`**: The workflow compiles and loads, but contains a bug that will
+  cause it to misbehave at runtime—such as a misspelled field name
+  (`LIKELY_TYPO`), a `var` reading from `payload` (`PAYLOAD_VAR`), or a missing
+  external connector (`UNRESOLVED_REFERENCE`). Checking only whether a workflow
+  builds will miss defects; always check for `Severity::Defect` when validating
+  submitted workflows.
+- **`Advisory`**: The workflow loads and runs, but has a pattern worth bringing
+  to the author's attention (such as an unguarded `validation` task).
 
-`Severity::Advisory` is the only class a host may safely ignore, so
-screening a definition before activating it is one pass over its issues.
-Both `IssueCode` and `Severity` are `#[non_exhaustive]`, so match the codes
-you care about and let the rest fall through.
+`Severity::Advisory` is the only level that can be safely ignored when gating
+workflow activation. Both `IssueCode` and `Severity` are marked
+`#[non_exhaustive]`, so always include a wildcard arm when matching on them.
 
-## Unknown keys and the compat reader
+## Unknown Keys and the Compatibility Reader
 
-`ParseOptions::default()` has the **compat reader** on. It reads 3.x's
-spellings of the policies and of the `validation` function's name and
-rewrites each into the 4.0 spelling, reporting a `V3_SPELLING` advisory at
-the 3.x key; see [Control Flow](./control-flow.md#coming-from-3x). It also
-decides what an unknown key becomes:
+`ParseOptions::default()` enables the **3.x compatibility reader**. It
+translates 3.x policy flags (`continue_on_error`, `halt_on`) and `validate` into
+their 4.0 equivalents and emits a `V3_SPELLING` advisory (see
+[Control Flow](./control-flow.md#migrating-from-3x)).
 
-| Key | Code | Severity | What happens |
+When the compatibility reader is enabled, unknown keys on workflow, task, or
+group objects are handled as follows:
+
+| Unknown Key Type | Issue Code | Severity | Behavior |
 |---|---|---|---|
-| A near miss of a known key at its level (`conditon`, `on_failrue`) | `LIKELY_TYPO` | Defect | Loads; the key is kept in the node's `ext` |
-| Any other unknown key | `UNKNOWN_KEY` | Advisory | Loads; the key is kept in the node's `ext` |
+| Close to a known key at that level (e.g., `conditon`, `on_failrue`) | `LIKELY_TYPO` | `Defect` | Workflow still loads; the key is moved into the node's `ext` object. |
+| Any other unknown key | `UNKNOWN_KEY` | `Advisory` | Workflow still loads; the key is moved into the node's `ext` object. |
 
-A key under `loop`, `for_each`, `rollout` or `function` is kept as
-`loop.<key>` and so on, and a key a built-in's input does not know as
-`function.input.<key>`. `ext` is the node's slot for host and UI data: the
-authored `ext` object first, then what moved there.
+Unknown keys inside `loop`, `for_each`, `rollout`, or `function` are preserved
+in `ext` under `loop.<key>`, `for_each.<key>`, etc., and unknown keys inside a
+built-in function's `input` are preserved under `function.input.<key>`.
 
 ```rust
 use dataflow_rs::def::{ParseOptions, parse};
@@ -157,8 +159,7 @@ let json = json!({"id": "w", "tasks": [
     {"id": "t", "conditon": true, "colour": "teal", "function": {"name": "map", "input": {"mappings": []}}}
 ]});
 
-// With the reader on, both keys load, and each is reported as what it is,
-// in the order they were written.
+// With the compatibility reader enabled (default), both keys load and are reported in order.
 let parsed = parse(&json, ParseOptions::default());
 let rows: Vec<(IssueCode, Severity, String)> = parsed
     .issues
@@ -173,102 +174,94 @@ let def = parsed.def.unwrap();
 let dataflow_rs::def::StepDef::Task(task) = &def.tasks()[0] else { unreachable!() };
 assert_eq!(task.header().ext()["colour"], json!("teal"));
 
-// With it off, every unknown key is refused, and nothing moves.
+// With `.compat(false)`, all unknown keys are rejected.
 let strict = parse(&json, ParseOptions::default().compat(false));
 assert!(strict.def.is_none());
 assert!(strict.issues.iter().all(|i| i.severity == Severity::Rejected));
 ```
 
-Inside a host function's `input` the rule is stricter: a derived config
-refuses an unknown key outright (`LIKELY_TYPO` or `UNKNOWN_KEY`, Rejected),
-since the function could not honour it.
+Inside a custom host function's `input`, validation is always strict:
+`#[derive(FunctionConfig)]` rejects any unknown key (`LIKELY_TYPO` or
+`UNKNOWN_KEY` with `Rejected` severity) regardless of the `compat` setting.
 
-## Issue codes
+## Issue Code Reference
 
-### Structure
+### Workflow and Step Structure
 
-| Code | Severity | Means |
+| Code | Severity | Description |
 |---|---|---|
-| `EMPTY_WORKFLOW_ID` | Rejected | `id` is missing or empty |
-| `NO_TASKS` | Rejected | `tasks` missing, not an array, or empty |
-| `MISSING_STEP_ID` | Rejected | A task or group carries no `id` |
-| `DUPLICATE_STEP_ID` | Rejected | Two steps share an id; groups share the task namespace, and `loop.setup` shares it with `tasks` |
-| `EMPTY_GROUP` | Rejected | A group's `tasks` is not a non-empty array |
-| `GROUP_TOO_DEEP` | Rejected | Groups nested past `MAX_GROUP_DEPTH` (8) |
-| `MISSING_FUNCTION` | Rejected | A task carries no `function` |
-| `INVALID_FUNCTION_NAME` | Rejected | `function` is not an object with a non-empty `name` |
-| `INVALID_TERMINAL` | Rejected | `terminal` is present but not a boolean |
-| `PARSE_FAILED` | Rejected | A key is missing or of the wrong type; the message says what was expected |
-| `NULL_CONDITION` | Advisory | A literal `null` `condition`: kept as the falsy expression `null`, so the step never runs; omit the key for no condition |
-| `INVALID_ROLLOUT` | Defect | A workflow's `rollout` range can never match (`bucket_end < bucket_start` or `bucket_end > 100`), so the workflow is never selected |
-| `MIXED_SPELLING` | Rejected | A 3.x policy key (`continue_on_error`, `halt_on`) beside a 4.0 one on one node |
-| `EXT_COLLISION` | Rejected | A key kept in `ext` under a name `ext` already holds |
+| `EMPTY_WORKFLOW_ID` | `Rejected` | Workflow `id` is missing or empty. |
+| `NO_TASKS` | `Rejected` | Workflow `tasks` is missing, not an array, or empty. |
+| `MISSING_STEP_ID` | `Rejected` | A task or group is missing its `id`. |
+| `DUPLICATE_STEP_ID` | `Rejected` | Two steps share the same `id` (tasks, groups, and `loop.setup` steps all share one ID namespace). |
+| `EMPTY_GROUP` | `Rejected` | A group's `tasks` field is not a non-empty array. |
+| `GROUP_TOO_DEEP` | `Rejected` | Groups are nested deeper than `MAX_GROUP_DEPTH` (8). |
+| `MISSING_FUNCTION` | `Rejected` | A task is missing its `function` field. |
+| `INVALID_FUNCTION_NAME` | `Rejected` | `function` is not an object with a non-empty `name`. |
+| `INVALID_TERMINAL` | `Rejected` | `terminal` is present but is not a boolean. |
+| `PARSE_FAILED` | `Rejected` | A required key is missing or has the wrong JSON type. |
+| `NULL_CONDITION` | `Advisory` | `condition` is literally `null` (which is falsy, so the step never runs; omit `condition` for an unconditional step). |
+| `INVALID_ROLLOUT` | `Defect` | A workflow's `rollout` range can never match (`bucket_end < bucket_start` or `bucket_end > 100`). |
+| `MIXED_SPELLING` | `Rejected` | A 3.x policy key (`continue_on_error`, `halt_on`) is combined with a 4.0 policy key on the same node. |
+| `EXT_COLLISION` | `Rejected` | An unknown key moved into `ext` collides with a key already present in `ext`. |
 
-### Loops and fan-out
+### Loops and Fan-Out
 
-| Code | Severity | Means |
+| Code | Severity | Description |
 |---|---|---|
-| `LOOP_INCREMENT_TOO_SMALL` | Rejected | `increment < 1`: the counter would never reach `max` |
-| `LOOP_BOUND_EMPTY` | Rejected | `max <= init`: no sweep could ever run |
-| `LOOP_COUNTER_INVALID` | Rejected | `counter` is not a non-empty dotted path |
-| `LOOP_SLOT_INVALID` | Rejected | `as` or `scratch` is not a non-empty dotted path |
-| `LOOP_ITEM_WITHOUT_OVER` | Rejected | `as` is set but there is no `over` to take elements from |
-| `LOOP_SLOT_COLLISION` | Rejected | Two of `counter` / `as` / `scratch` name the same path, or one lies inside the other |
-| `LOOP_OVER_INVALID` | Rejected | `over` is a scalar literal that can never be an array, or `init < 0` alongside `over`; see [Loops](./loops.md) |
-| `INVALID_FOR_EACH` | Rejected | A task's `for_each` breaks one of its rules, or sits on a built-in or a group (reported at the offending key); see [Fan-Out](./for-each.md#validation) |
+| `LOOP_INCREMENT_TOO_SMALL` | `Rejected` | `loop.increment < 1` (the counter would never reach `max`). |
+| `LOOP_BOUND_EMPTY` | `Rejected` | `loop.max <= loop.init` (zero iterations could run). |
+| `LOOP_COUNTER_INVALID` | `Rejected` | `loop.counter` is not a valid non-empty dotted path. |
+| `LOOP_SLOT_INVALID` | `Rejected` | `loop.as` or `loop.scratch` is not a valid non-empty dotted path. |
+| `LOOP_ITEM_WITHOUT_OVER` | `Rejected` | `loop.as` is set without `loop.over`. |
+| `LOOP_SLOT_COLLISION` | `Rejected` | Two of `counter`, `as`, and `scratch` point to the same or overlapping paths. |
+| `LOOP_OVER_INVALID` | `Rejected` | `loop.over` is a scalar literal that can never evaluate to an array, or `loop.init < 0` is used alongside `loop.over` (see [Loops](./loops.md)). |
+| `INVALID_FOR_EACH` | `Rejected` | A task's `for_each` configuration is invalid, or `for_each` is placed on a built-in function or group (see [Fan-Out](./for-each.md#validation)). |
 
-### Functions and their inputs
+### Functions and Inputs
 
-| Code | Severity | Means |
+| Code | Severity | Description |
 |---|---|---|
-| `UNKNOWN_FUNCTION` | Rejected | No function is registered under the name, and it is not a built-in; the message names the nearest registered name when one is close |
-| `INPUT_PARSE` | Rejected | A config refused its input: a missing field, a wrong type, a rule between fields, or a function's own `prepare` |
-| `TEMPLATE_COMPILE` | Rejected | An expression does not compile |
-| `INVALID_MAPPING` | Rejected | A `map` mapping breaks a rule between its keys; see [Map](../built-in-functions/map.md) |
-| `NULL_MAPPING` | Advisory | A `map` mapping whose `logic` always evaluates to `null`, so it never writes; use `"unset": true` to remove a path |
-| `UNGUARDED_VALIDATION` | Advisory | A `validation` whose rejection nothing acts on; reported at its `on_rejection` |
-| `INVALID_PATH` | Rejected | A literal context path not rooted at `data`, `metadata` or `temp_data`, or a document hole whose path is not one |
-| `PAYLOAD_VAR` | Defect | A literal `var` rooted at `payload`, which is not in the evaluation context |
-| `UNRESOLVED_REFERENCE` | Defect | A field a function's spec names as a `Reference` holds a literal the host's `ResourceOracle` does not resolve |
+| `UNKNOWN_FUNCTION` | `Rejected` | No built-in or registered host function matches `function.name` (includes a "did you mean" suggestion when close to a registered name). |
+| `INPUT_PARSE` | `Rejected` | Function configuration failed validation (missing field, wrong type, custom check failure, or `Function::prepare` error). |
+| `TEMPLATE_COMPILE` | `Rejected` | A JSONLogic expression failed to compile. |
+| `INVALID_MAPPING` | `Rejected` | A `map` item violates mapping constraints (see [Map](../built-in-functions/map.md)). |
+| `NULL_MAPPING` | `Advisory` | A `map` item's `logic` is a constant `null`, which is a no-op by default (use `"unset": true` to remove a field). |
+| `UNGUARDED_VALIDATION` | `Advisory` | A `validation` task's rejection is neither halted on nor checked later in the workflow. |
+| `INVALID_PATH` | `Rejected` | A literal context path or `Interpolated` placeholder is not rooted at `data`, `metadata`, or `temp_data`. |
+| `PAYLOAD_VAR` | `Defect` | A literal `var` expression reads from `payload` (which is not part of the evaluation context). |
+| `UNRESOLVED_REFERENCE` | `Defect` | A field marked as a `Reference` in `FunctionSpec` contains a literal name that the `ResourceOracle` could not resolve. |
 
-### Secrets, template keys and documents
+### Secrets, Template Keys, and Interpolated Documents
 
-| Code | Severity | Means |
+| Code | Severity | Description |
 |---|---|---|
-| `UNKNOWN_SECRET` | Rejected | An expression names a secret the engine does not declare; see [Secrets](./secrets.md) |
-| `SECRET_IN_MESSAGE_WRITE` | Rejected | An expression whose result the engine records reads a secret; see [Secrets](./secrets.md#what-a-secret-may-not-do) |
-| `DUPLICATE_TEMPLATE_KEY` | Rejected | Two keys in one template object collapse to the same name once the `$` escape is stripped |
-| `ESCAPED_TEMPLATE_KEY` | Advisory | A `$`-prefixed template key, listed so the audit is mechanical |
-| `OPERATOR_IN_DOCUMENT` | Advisory | An operator-shaped node inside an `Interpolated` document, which stays data |
-| `SECRET_IN_DOCUMENT` | Rejected | A `{"secret": …}` node inside an `Interpolated` document, which would never be substituted |
+| `UNKNOWN_SECRET` | `Rejected` | An expression references a literal secret name not present in the engine's `Secrets` store (see [Secrets](./secrets.md)). |
+| `SECRET_IN_MESSAGE_WRITE` | `Rejected` | An expression whose output is recorded by the engine reads a secret (see [Secrets](./secrets.md#preventing-secret-leaks)). |
+| `DUPLICATE_TEMPLATE_KEY` | `Rejected` | Two keys in the same template object resolve to the same name after stripping a leading `$`. |
+| `ESCAPED_TEMPLATE_KEY` | `Advisory` | A template key uses a leading `$` escape prefix. |
+| `OPERATOR_IN_DOCUMENT` | `Advisory` | An `Interpolated` document contains an operator-shaped object (which is kept as literal data rather than evaluated). |
+| `SECRET_IN_DOCUMENT` | `Rejected` | An `Interpolated` document contains a `{"secret": …}` node. |
 
-### Keys and spellings
+### Unknown Keys and 3.x Spellings
 
-| Code | Severity | Means |
+| Code | Severity | Description |
 |---|---|---|
-| `LIKELY_TYPO` | Defect | An unknown key within edit distance of a known key at its level |
-| `UNKNOWN_KEY` | Advisory | An unknown key that resembles no known key; kept in `ext` |
+| `LIKELY_TYPO` | `Defect` | An unknown key is within a small edit distance of a valid key at that level. |
+| `UNKNOWN_KEY` | `Advisory` | An unknown key does not resemble any valid key at that level (moved into `ext`). |
+| `V3_SPELLING` | `Advisory` | A 3.x policy key or `validate` function name was rewritten to its 4.0 equivalent. |
+| `GROUP_CONTINUE_ON_ERROR` | `Advisory` | A group has `continue_on_error` (moved into `ext`). |
+| `INVALID_HALT_ON` | `Rejected` | `halt_on` has a value other than `"never"` or `"failure"`, or is placed on a group. |
 
-### Codes for 3.x spellings
+## Compiling Against a Registry (`Compiler`)
 
-Only the compat reader reports these, for a definition written in 3.x's
-spelling:
+Structural parsing (`def::parse`) checks the shape of the workflow JSON. The
+second stage—compiling against a `Registry`—verifies that every task names a
+registered function, every function config compiles, and all expressions pass
+secret and path checks.
 
-| Code | Severity | Means |
-|---|---|---|
-| `V3_SPELLING` | Advisory | A 3.x key was read as its 4.0 policy, or `validate` as `validation` |
-| `GROUP_CONTINUE_ON_ERROR` | Advisory | A group carries `continue_on_error`, which 3.x never honoured either; kept in the group's `ext` |
-| `INVALID_HALT_ON` | Rejected | A `halt_on` that is not `"never"` or `"failure"`, or one on a group |
-
-See [Control Flow](./control-flow.md#coming-from-3x) for the rewrite table.
-
-## Compiling against the registry
-
-Shape is half the question. The other half needs the registry: will every
-task name a function this engine can run, with an input its config
-compiles? A `Compiler` comes from a `Registry`, or from a running engine
-(`engine.compiler()`, with the program's registry and options), and
-compiles one workflow at a time:
+Create a `Compiler` from a `Registry` (or call `engine.compiler()` on a running
+engine) to compile or check workflows individually:
 
 ```rust
 use dataflow_rs::def::{ParseOptions, parse};
@@ -285,28 +278,27 @@ let def = parse(
 .def
 .unwrap();
 
-// `compile_one` is `Err` with every issue when any is Rejected, and `Ok`
-// with the workflow and its Defects and Advisories otherwise.
+// `compile_one` returns `Err(issues)` when any issue has `Rejected` severity,
+// or `Ok(Compiled)` containing the compiled workflow plus any Defects and Advisories.
 let issues = compiler.compile_one(&def).unwrap_err();
 assert_eq!(issues[0].code, IssueCode::UnknownFunction);
 assert_eq!(issues[0].path.to_string(), "tasks[0].function.name");
 assert_eq!(issues[0].step_id.as_deref(), Some("t"));
 
-// `check` is every issue, whether or not the workflow is rejected.
+// `check` returns all issues regardless of whether compilation succeeded or failed.
 assert_eq!(compiler.check(&def), issues);
 ```
 
-A config's issues sit below the task's `function.input`, each with the
-`field` it is in: `tasks[0].function.input.timeout_ms`, field `timeout_ms`.
-The compile also runs the expression checks over every expression:
-secrets, template keys and `payload` reads.
+Issues inside a function's configuration are reported under
+`tasks[i].function.input.<field>`, with `issue.field` set to the top-level input
+field name.
 
-### Fragments
+### Validating Step Fragments (`check_steps`)
 
-An editor that checks one branch of a workflow as the author types asks for
-the issues of a fragment: a list of steps as it would sit at a path such as
-`tasks[2].tasks` or `loop.setup`. `check_steps` parses it as `parse` reads
-a workflow's steps and compiles it, every path under the root given:
+If you are building a workflow editor that validates a single branch or group as
+the user edits it, use `Compiler::check_steps`. It parses and compiles a JSON
+array of steps relative to a given root path (such as `"tasks[2].tasks"` or
+`"loop.setup"`), reporting all issue paths under that prefix:
 
 ```rust
 use dataflow_rs::program::{CompileOptions, IssueCode};
@@ -322,18 +314,14 @@ assert_eq!(issues[0].code, IssueCode::UnknownFunction);
 assert_eq!(issues[0].path.to_string(), "tasks[2].tasks[0].function.name");
 ```
 
-A fragment under `loop.setup` makes setup steps, and each `tasks` key in
-the root past the first counts one group of depth, so a group too deep is
-reported as it would be in the whole.
+### Validating External Resource References (`ResourceOracle`)
 
-### Resources a config names
-
-A host function's `FunctionSpec` can name the config fields that refer to
-another definition, a connector say, with `Reference::new(field, kind)`.
-Given a `ResourceOracle` through `CompileOptions::resources`, the compiler
-checks each one whose value is a literal string, and reports one the oracle
-does not resolve as `UNRESOLVED_REFERENCE`, a defect: the workflow would
-load and then fail every call.
+A custom function's `FunctionSpec` can declare that certain config fields
+reference external resources (such as database connectors) using
+`Reference::new(field, kind)`. When you supply a `ResourceOracle` via
+`CompileOptions::resources`, the compiler validates every literal resource name
+against your oracle and reports missing resources as `UNRESOLVED_REFERENCE`
+(`Severity::Defect`).
 
 ```rust
 use dataflow_rs::def::{ParseOptions, parse};
@@ -363,7 +351,7 @@ impl Function for Query {
     }
 }
 
-/// The deployment's connectors.
+/// Checks whether a connector name exists in the current deployment.
 struct Connectors;
 
 impl ResourceOracle for Connectors {
@@ -389,15 +377,16 @@ assert_eq!(compiled.issues[0].severity, Severity::Defect);
 assert_eq!(compiled.issues[0].path.to_string(), "tasks[0].function.input.connector");
 ```
 
-An `Err(why)` with a non-empty `why` leads the issue's message; an empty one
-gives the plain `` no connector named `sessions` resolves ``.
+If `ResourceOracle::resolve` returns `Err(reason)` with a non-empty `reason`
+string, that reason is included in the issue message; returning `Err(String::new())`
+produces the default message (`` no connector named `sessions` resolves ``).
 
-## Quarantine: run what compiles
+## Quarantining Invalid Workflows
 
-`Engine::builder().build()` fails when any definition is rejected, with
-every rejected definition's issues, parse issues before compile issues, in
-input order. A host that holds many rows and wants the good ones running
-compiles each on its own and links the ones that compile:
+`Engine::builder().build()` fails if *any* workflow definition is rejected. When
+loading many workflow rows from a database, you can compile each workflow
+individually, quarantine any rows that fail, and link the valid workflows into a
+running `Engine` with `compiler.link(accepted)`:
 
 ```rust
 use dataflow_rs::def::{ParseOptions, parse};
@@ -433,29 +422,22 @@ assert_eq!(quarantined.len(), 1);
 assert_eq!(quarantined[0].0, 1);
 ```
 
-`link` sorts the workflows by `priority` and never fails. A reload is the
-same loop over the new rows with `engine.compiler()`, then
-`engine.with_program(program)`: the engine returned runs the new program,
-and the old one, with any run in flight, keeps the old.
+`compiler.link(accepted)` sorts the compiled workflows by `priority` and builds
+an immutable `Program`. To hot-reload workflows on a running engine, run the
+same loop using `engine.compiler()` and call `engine.with_program(program)`: the
+new `Engine` instance runs the updated program while any in-flight runs on the
+previous instance finish undisturbed.
 
-One function's config can be checked alone, with no definition around it:
-`function::testing::config::<C>(input)` compiles it and returns every issue
-at its path below the input. See
-[Testing a function](./custom-functions.md#testing-a-function).
+## Recommended Validation Flow for APIs
 
-## Putting it together
+When validating a workflow submitted to an API endpoint:
 
-A submission endpoint checks in this order, stopping at the first stage that
-reports anything Rejected:
-
-1. **`def::parse(&json, ParseOptions::default())`**: shape, with field
-   paths. Reject with a `400` listing every issue; show the Defects and
-   Advisories to the author either way.
-2. **`compiler.compile_one(&def)`** against the engine the definition will
-   run on: will this engine run it? Reject with a `400` naming the steps and
-   what each needs.
-
-Only then store and activate the definition, and keep the compiled
-workflow for the next `link`. A host that lets `Engine::builder().build()`
-decide instead finds out at reload, when one bad row takes every workflow
-in the build down with it.
+1. **Run `def::parse(&json, ParseOptions::default())`** to validate structure
+   and field paths. If `parsed.def` is `None` (or if any issue has `Defect`
+   severity), reject the request with `400 Bad Request` and return
+   `parsed.issues`.
+2. **Run `compiler.compile_one(&def)`** against your target `Registry`. If it
+   returns `Err(issues)` (or if `compiled.issues` contains any `Defect`), reject
+   the request with `400 Bad Request` and return the issues.
+3. **Store and activate the workflow**, keeping any `Advisory` issues to display
+   as warnings in your UI.

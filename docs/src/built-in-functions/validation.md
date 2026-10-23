@@ -1,7 +1,6 @@
 # Validation Function
 
-`validation` checks rules against the message and records an error for each
-rule that fails. It writes nothing to the context.
+The `validation` function evaluates a list of JSONLogic rules against the message context and records an error on `message.errors()` for each rule that fails. It is read-only and never modifies the context.
 
 ```json
 {
@@ -27,41 +26,35 @@ rule that fails. It writes nothing to the context.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `rules` | array | Yes | The rules, checked in order |
+| `rules` | array | Yes | List of validation rules evaluated in order |
 
-### Rule
+### Rule Fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `logic` | JSONLogic | Yes | Passes the rule only when it evaluates to `true` |
-| `message` | string \| JSONLogic | Yes | The error recorded when the rule fails, evaluated only then |
+| `logic` | JSONLogic | Yes | Validation expression; the rule passes only when it evaluates to boolean `true` |
+| `message` | string \| JSONLogic | Yes | Error message recorded when the rule fails (evaluated only on failure) |
 
-Both are required: a rule missing either is `INPUT_PARSE` at its key when
-the engine is built.
+Both `logic` and `message` are required on every rule; omitting either produces an `INPUT_PARSE` issue at build time.
 
-## How a rule is judged
+## How Rules Are Evaluated
 
-Every rule runs, in order; no failure stops the rest.
+All rules in the `rules` list are evaluated in order—a failing rule does not short-circuit subsequent rules in the same task:
 
-| `logic` evaluates to | Record |
+| `logic` Result | Recorded on `message.errors()` |
 |----------------------|--------|
-| `true` | None: the rule passes |
-| Anything else: `false`, `null`, `1`, `"yes"`, `[1]`, an object | `VALIDATION_ERROR`, with the rule's `message` |
-| An error (the expression does not evaluate) | `EVALUATION_ERROR`, with `Failed to evaluate rule <index>: <reason>` |
-| The `ExprEngine`'s ops budget exceeded, by `logic` or `message` | None: the task fails with `BUDGET_EXCEEDED`, under `on_failure` |
+| `true` | None (rule passes) |
+| Any other value (`false`, `null`, `1`, `"yes"`, `[1]`, `{}`) | `VALIDATION_ERROR` with the rule's `message` |
+| Expression evaluation error | `EVALUATION_ERROR` (`Failed to evaluate rule <index>: <reason>`) |
+| Exceeds `ExprEngine` `ops_budget` (in `logic` or `message`) | Aborts the task immediately with `BUDGET_EXCEEDED` (governed by `on_failure`) |
 
-Only a literal `true` passes. A truthy value that is not `true` fails the
-rule, so `{"var": "data.email"}` is not a presence check; write
-`{"!!": {"var": "data.email"}}`.
+> **Important:** A rule passes **only** when `logic` evaluates to boolean `true`. Truthy non-boolean values (such as a non-empty string or non-zero number) fail the rule. Always wrap presence checks in `"!!"`: write `{"!!": {"var": "data.email"}}` rather than `{"var": "data.email"}`.
 
-When any rule recorded an error the call ends with status `400`; otherwise
-`200`. A `400` is a rejection, and by default the next task runs; see
-[Stopping on a failure](#stopping-on-a-failure).
+If every rule passes, the `validation` task finishes with status `200`. If one or more rules fail, the task finishes with status `400` (a **rejection**). By default, `on_rejection` is `"continue"`, so the next task still runs unless you set `"on_rejection": "halt"`; see [Stopping the Workflow on Validation Failure](#stopping-the-workflow-on-validation-failure).
 
-### Computed messages
+### Dynamic Error Messages
 
-A `message` is JSONLogic like every other parameter, so an error can name the
-value that caused it:
+Because `message` can be a JSONLogic expression, error messages can include dynamic values from the message context:
 
 ```json
 {
@@ -70,28 +63,19 @@ value that caused it:
 }
 ```
 
-With `data.age` at `0` the record reads `Age 0 must be positive`. A message
-is rendered only when its rule fails, so a computed one costs nothing on the
-passing path, and a message that cannot be rendered never fails a passing
-rule. A message that fails to render on a failing rule records
-`VALIDATION_ERROR` with the text `Validation failed`. A message that is not
-a string is recorded as its JSON.
+When `data.age` is `0`, this records `"Age 0 must be positive"`. The `message` expression is evaluated lazily only when `logic` fails, so dynamic messages add zero cost when validation passes. (If a dynamic `message` expression fails to evaluate, `"Validation failed"` is recorded; if it evaluates to a non-string value, it is formatted as JSON.)
 
-The rendered text lands on the message, which the engine records, so a
-`message` may not read `{"secret": …}`: the definition is refused with
-`SECRET_IN_MESSAGE_WRITE` at `rules[i].message`. A rule may test a secret in
-its `logic`; it may not report one. See [Secrets](../advanced/secrets.md).
+> **No secrets in error messages:** Because validation error messages are stored in `message.errors()`, a rule's `message` cannot reference `{"secret": "..."}` (`SECRET_IN_MESSAGE_WRITE`). A rule's `logic` *can* compare against a secret, since `logic` reduces to a boolean. See [Secrets](../advanced/secrets.md).
 
-## The records
+## Error Records
 
-Each failing rule appends one record to the message's errors:
+Each failing rule appends an `ErrorRecord` to `message.errors()`:
 
 ```json
 {"code": "VALIDATION_ERROR", "message": "Email is required", "path": null, "workflow_id": "w", "task_id": "check", "timestamp": "2026-10-16T19:12:26.123456+00:00"}
 ```
 
-Each record carries `workflow_id`, `task_id` and the run's timestamp, as every
-other task record does (3.x wrote neither id on validation records). Read them from Rust after a run:
+You can inspect all recorded validation errors in Rust after a run:
 
 ```rust
 # fn _demo(message: &dataflow_rs::Message) {
@@ -101,7 +85,7 @@ for error in message.errors() {
 # }
 ```
 
-Run over `{"age": 0, "status": "unknown", "word": "not"}`, this task
+For example, running the following task against `data = {"age": 0, "status": "unknown", "word": "not"}`:
 
 ```json
 {
@@ -121,7 +105,7 @@ Run over `{"age": 0, "status": "unknown", "word": "not"}`, this task
 }
 ```
 
-records `400` and these five errors, in rule order:
+returns status `400` and appends five error records in rule order:
 
 ```text
 VALIDATION_ERROR  Email is required
@@ -131,15 +115,11 @@ EVALUATION_ERROR  Failed to evaluate rule 3: Thrown: {"type":"NaN"} (in operator
 VALIDATION_ERROR  truthy but not true
 ```
 
-## Stopping on a failure
+## Stopping the Workflow on Validation Failure
 
-**A failing `validation` does not stop the workflow on its own.** It returns
-`400`, which is a rejection, and a task's `on_rejection` is `continue` by
-default: the next task runs on the invalid message. Plenty of workflows
-validate to record errors rather than to gate, so this is deliberate. A
-`validation` whose rejection nothing after it acts on is reported when the
-definition is checked, as the advisory `UNGUARDED_VALIDATION` at the task's
-`on_rejection`:
+**By default, a failing `validation` task does not stop the workflow.** It returns status `400` (a rejection), and a task's default `on_rejection` policy is `"continue"` so that workflows can collect validation errors across multiple tasks.
+
+If a `validation` task is followed by other tasks that do not check `metadata.progress.status_code`, `Compiler::check` emits an `UNGUARDED_VALIDATION` advisory on the validation task to remind you:
 
 ```text
 a failing rule here records status 400 and task `process` still runs:
@@ -147,13 +127,11 @@ a failing rule here records status 400 and task `process` still runs:
 workflow, or gate what follows on `metadata.progress.status_code`
 ```
 
-`on_failure` does not help: it covers a `500` and an error, never a `400`.
+Note that setting `on_failure` on a validation task has no effect on failed validation rules, because `on_failure` applies only to `5xx` statuses and `Err` outcomes—not `400` rejections.
 
-### Within one workflow: `on_rejection: "halt"`
+### Option 1: Set `"on_rejection": "halt"` on the Validation Task
 
-Put `"on_rejection": "halt"` on the validation task. The workflow stops when
-a rule failed, a passing message carries on, and the audit entry keeps the
-real `400`:
+To stop the current workflow as soon as validation fails, set `"on_rejection": "halt"` on the validation task:
 
 ```json
 {
@@ -175,18 +153,11 @@ real `400`:
 }
 ```
 
-On a message without `data.email`, `check` records `400` and the error,
-`process` does not run, and the run goes on to the next workflow. The run
-ends `CompletedWithErrors`, since the message holds a record.
+When `data.email` is missing, `check` records status `400` and the `VALIDATION_ERROR`, `process` is skipped, the workflow exits with `WorkflowExit::Halted`, and the engine moves on to the next workflow (finishing with `RunStatus::CompletedWithErrors`).
 
-A `"terminal": true` on the task ends the workflow whether or not a rule
-failed. See [Control Flow](../advanced/control-flow.md).
+### Option 2: Gate a Subsequent Task on `metadata.progress.status_code`
 
-### Gating a later task on the status
-
-The engine writes `metadata.progress` (`workflow_id`, `task_id`,
-`status_code`) after every task, so a condition can read what the validation
-returned:
+Because the engine updates `metadata.progress` (`{workflow_id, task_id, status_code}`) after every task, a subsequent task can check whether the preceding validation returned `400`:
 
 ```json
 {
@@ -196,28 +167,21 @@ returned:
 }
 ```
 
-Placed right after the validation, `process` is skipped on a `400` and the
-tasks after it still run. Across workflows, have the engine mirror the
-records where a condition can read them, with `EngineConfig::error_context`;
-see [Error Handling](../core-concepts/error-handling.md).
+If you want a later *workflow* to branch on validation errors, configure `EngineConfig::error_context`; see [Error Handling → Branching on Task Failures](../core-concepts/error-handling.md#branching-on-task-failures).
 
-### 3.x
+### Migrating from 3.x
 
-In 3.x the gate was `"halt_on": "failure"` on the task, and
-`continue_on_error` never covered a `400` either. The compat reader rewrites
-`halt_on: "failure"` to `on_rejection: "halt"` when a 3.x definition loads,
-and `validate`, the 3.x name of this function, to `validation`. See
-[Migrating from 3.x](../migration/from-3.md).
+In 3.x, this function was named `validate` and halting on failure used `"halt_on": "failure"`. When a 3.x definition is loaded in 4.0, the compatibility reader automatically rewrites `validate` to `validation` and `"halt_on": "failure"` to `"on_rejection": "halt"`. See [Migrating from 3.x](../migration/from-3.md).
 
-## Common patterns
+## Common Validation Patterns
 
-### Required field
+### Required Field
 
 ```json
 {"logic": {"!!": {"var": "data.email"}}, "message": "Email is required"}
 ```
 
-### Numeric range
+### Numeric Range
 
 ```json
 {
@@ -229,7 +193,7 @@ and `validate`, the 3.x name of this function, to `validation`. See
 }
 ```
 
-### Value in a list
+### Allowed Values (`in`)
 
 ```json
 {
@@ -238,7 +202,7 @@ and `validate`, the 3.x name of this function, to `validation`. See
 }
 ```
 
-### Conditional requirement
+### Conditional Requirement
 
 ```json
 {
@@ -250,12 +214,9 @@ and `validate`, the 3.x name of this function, to `validation`. See
 }
 ```
 
-### String length
+### String Length
 
-Needs the `ExtString`
-[operator family](../advanced/jsonlogic.md#operator-families);
-without it, `{"length": …}` is literal data, which is not `true`, so the rule
-fails on every message.
+Requires enabling `OperatorFamily::ExtString` on `ExprEngineBuilder` (see [Operator Families](../advanced/jsonlogic.md#operator-families)):
 
 ```json
 {
@@ -264,17 +225,15 @@ fails on every message.
 }
 ```
 
-### Pattern matching
+### Substring / Prefix Matching
 
-JSONLogic has no regex operator. Substring and prefix checks cover many
-cases: `in` is a core operator, `starts_with` and `ends_with` need
-`OperatorFamily::ExtString`.
+Core JSONLogic provides `in` for substring checks, and `OperatorFamily::ExtString` adds `starts_with` and `ends_with`:
 
 ```json
 {"logic": {"in": ["@", {"var": "data.email"}]}, "message": "Invalid email format"}
 ```
 
-For a regex, write a [host function](./host-functions.md) and run it in Rust.
+For full regular expression matching, register a custom [host function](./host-functions.md) or custom operator in Rust.
 
 ## Try It
 
@@ -283,14 +242,9 @@ For a regex, write a [host function](./host-functions.md) and run it in Rust.
 <div class="playground-widget" data-workflows='[{"id":"validation_demo","name":"Validation Demo","tasks":[{"id":"parse","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"check","name":"Validate","function":{"name":"validation","input":{"rules":[{"logic":{"!!":[{"var":"data.input.email"}]},"message":"Email is required"},{"logic":{">":[{"var":"data.input.age"},0]},"message":"Age must be positive"},{"logic":{"in":[{"var":"data.input.status"},["active","pending","suspended"]]},"message":"Invalid status"}]}}}]}]' data-payload='{"name":"John","age":0,"status":"unknown"}'>
 </div>
 
-Notice the validation errors in the output.
-
 ## Best Practices
 
-1. **Validate early**: put the validation task first, after the parse.
-2. **Write specific messages**, and compute them where the value matters.
-3. **Expect every rule to run**: validation does not short-circuit.
-4. **Gate with `on_rejection: "halt"`** when a failure must stop the
-   workflow; `on_failure` does not cover a `400`.
-5. **Read the errors** after a run; the run's status alone does not say
-   which rule failed.
+1. **Validate Early** — Place `validation` tasks right after parsing input data.
+2. **Use `"on_rejection": "halt"` When Gating Downstream Tasks** — Remember that `validation` returns `400`, which continues by default unless `"on_rejection": "halt"` is set.
+3. **Wrap Presence Checks in `"!!"`** — Rules require boolean `true` to pass.
+4. **Include Field Values in Error Messages** — Use dynamic JSONLogic expressions in `message` when helpful for debugging.

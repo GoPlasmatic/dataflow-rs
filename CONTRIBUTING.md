@@ -1,44 +1,39 @@
 # Contributing to dataflow-rs
 
-Thanks for your interest in contributing. This guide covers what you need to
-get a change merged.
+Thanks for your interest in contributing! This guide covers what you need to
+get a change reviewed and merged.
 
 ## Repository Layout
 
-This is a Cargo workspace with four published artifacts that share one
-version number, two members that are never published, and the book:
+This repository is a Cargo workspace with four published packages that share a
+single version number, two internal test crates, and the documentation book:
 
-| Path | Artifact | Registry |
+| Path | Package | Registry |
 |---|---|---|
-| `.` | `dataflow-rs`, the engine | crates.io |
-| `derive/` | `dataflow-rs-derive`, the `#[derive(FunctionConfig)]` macro behind it | crates.io |
-| `wasm/` | `@goplasmatic/dataflow-wasm`, the engine for the browser and Node | npm |
-| `ui/` | `@goplasmatic/dataflow-ui`, the React debugger | npm |
+| `.` | `dataflow-rs` — the core rules engine | crates.io |
+| `derive/` | `dataflow-rs-derive` — the `#[derive(FunctionConfig)]` procedural macro | crates.io |
+| `wasm/` | `@goplasmatic/dataflow-wasm` — WebAssembly bindings for browsers and Node.js | npm |
+| `ui/` | `@goplasmatic/dataflow-ui` — React visualizer and step-by-step debugger | npm |
 | `docs/` | mdBook user guide, deployed to GitHub Pages | none |
-| `docs-tests/` | Compiles the book's and the README's Rust examples as doctests | none |
-| `corpus/` | The corpus: the cases the engine's tests load, and the tools that read them | none |
+| `docs-tests/` | Compiles Rust code blocks in the book and README as doctests | none |
+| `corpus/` | Shared test cases and reference models used by the test suite | none |
 
-`wasm/` and `derive/` are workspace members; `ui/` is a separate npm project
-driven by the release workflow. The engine's version is authored once, in the
-root `Cargo.toml`'s `[workspace.package] version`: every published Rust
-artifact inherits it and names the internal crates through
-`[workspace.dependencies]`, which carries the version a `cargo publish`
-requires of a path dependency, so a release publishes the derive first.
-`scripts/check-versions.sh` holds the npm artifacts and the docs' minor pins
-to it and runs on every PR.
+`wasm/` and `derive/` are Cargo workspace members, while `ui/` is a standalone
+npm package managed by the release workflow. The version number is defined once
+in `[workspace.package] version` in the root `Cargo.toml`. All published Rust
+crates inherit this version and reference internal crates via
+`[workspace.dependencies]`. `scripts/check-versions.sh` verifies that the npm
+packages and documentation version pins stay in sync on every pull request.
 
 ## Prerequisites
 
-- **Rust 1.98 or later** (Edition 2024). This is the declared MSRV and CI
-  enforces it. The floor is inherited rather than chosen: `datalogic-rs` 5.8
-  and `datavalue-rs` 0.3 both declare `rust-version = "1.98"`, so the crate
-  cannot build on less. Let-chains (`if let ... && let ...`, stable since
-  1.88) are therefore allowed, and clippy's `collapsible_if` asks for them.
-- **Node.js 22**, only if you are touching `ui/`. CI and the release
-  workflow run that version.
-- **wasm-pack**, if you are touching `wasm/` or running the `ui/` debugger
-  against unreleased engine changes (see *Running the debugger against your
-  engine changes*).
+- **Rust 1.98 or later** (Edition 2024). This is the minimum supported Rust
+  version (MSRV) enforced by CI, required by `datalogic-rs` 5.8 and
+  `datavalue-rs` 0.3. Let-chains (`if let ... && let ...`, stabilized in Rust
+  1.88) are supported and expected by Clippy's `collapsible_if` lint.
+- **Node.js 22**, required only if you are working on `ui/`.
+- **wasm-pack**, required if you are working on `wasm/` or testing `ui/`
+  against local engine changes (see below).
 
 ## Getting Started
 
@@ -48,76 +43,48 @@ cd dataflow-rs
 cargo test --workspace --all-features
 ```
 
-Every test should pass: the root's tests and doctests, the derive's, the
-corpus crate's and `docs-tests`' (the book's and the README's doctests).
+All tests should pass, including unit tests, integration tests, derive tests,
+corpus tests, and documentation doctests (`docs-tests`).
 
-The count is feature-dependent. The optional operator families are `#[cfg]`-gated
-on both sides: some tests only exist when a family is on, others only when it is
-off. The default build therefore reports a different number:
+To test the root crate with its default feature set:
 
 ```bash
 cargo test
 ```
 
-A bare cargo command at the root selects the root package; every other member
-takes `-p`, as in `cargo test -p dataflow-corpus` or
-`cargo test -p dataflow-docs-tests`. Use the bare command for the default
-build, not `--workspace`: `wasm/` depends on the root with `wasm-web` and
-`datetime`, and cargo unifies features across the members one invocation
-selects, so `--workspace` would turn `datetime` back on.
+> **Note:** Running `cargo` at the root without `--workspace` selects only the
+> root package. Use `-p` to target other workspace members (for example,
+> `cargo test -p dataflow-corpus` or `cargo test -p dataflow-docs-tests`).
+> Avoid passing `--workspace` when testing the default feature set, because
+> `wasm/` enables `wasm-web` and `datetime`, which Cargo feature unification
+> would enable across the workspace.
 
-### Running the debugger against your engine changes
+### Running the UI Debugger Against Local Engine Changes
 
-`ui/package.json` pins `@goplasmatic/dataflow-wasm` to the last **published**
-version, because `npm ci` has to resolve it before a matching engine exists,
-both here and in `release.yml`. `release.yml` installs that release's own
-just-published engine instead of overlaying a local build, so the release
-validates what consumers receive. A plain `npm run dev` therefore runs the
-debugger against the last release, not your checkout.
-
-The mismatch can hide bugs. An older engine reads a key it predates as an
-unknown key: the definition still loads, with the key kept in the node's `ext`
-and an issue reported, and does something other than what it says.
-
-Two mechanisms keep that from biting you:
+In `ui/package.json`, `@goplasmatic/dataflow-wasm` points to the latest
+**published** npm version so that `npm ci` works before a new release is
+published. To test your local Rust engine changes in the UI, run:
 
 ```bash
 cd ui
-npm run dev            # predev builds your engine and overlays it
+npm run dev            # predev rebuilds wasm/pkg and copies it into node_modules
 ```
 
-`npm run dev` runs `wasm:local` first, which rebuilds `wasm/pkg`, verifies it,
-and copies it over `node_modules`. It always rebuilds rather than reusing
-whatever is already there. A stale build usually carries the *same* version as
-your checkout, so no version check can see it. wasm-pack no-ops in about two
-seconds when nothing changed.
+`npm run dev` automatically runs `wasm:local` first, which rebuilds `wasm/pkg`,
+runs `wasm/scripts/verify-wasm.mjs`, copies the output into `node_modules`, and
+clears `node_modules/.vite` so Vite picks up the updated bundle. If you keep
+the dev server running while editing Rust code, run `npm run wasm:local`
+manually to refresh the WASM build.
 
-If wasm-pack is not installed the step warns and continues, so a contributor
-touching only `ui/` is not blocked. The second mechanism makes that safe: the
-engine exports `engine_version()`, and `WasmEngineAdapter` throws when the
-loaded engine is **older** than the `dataflow-ui` build using it. A newer
-engine passes, since the dependency is a caret range that npm can resolve to a
-newer release. Run `npm run wasm:local` by hand after any engine change if you
-keep a dev server running.
-
-Overlaying also clears `node_modules/.vite`. Vite keys its dependency cache off
-the lockfile, which does not change when files are overwritten in place, so
-without clearing it the dev server serves old JS glue against the new binary.
-
-This overlay is one-directional: `predev` and `wasm:local` are the only scripts
-that call `use-local-wasm.mjs`. `build:lib` and `prepublishOnly` (and therefore
-`npm publish`) do not call it. `release.yml` installs the published engine
-before running `build:lib`; a `prebuild:lib` hook that overlaid a local build
-would overwrite that published engine during `publish-ui`.
-
-`npm run wasm:local` refuses to overlay a build that fails
-`wasm/scripts/verify-wasm.mjs`, the same guard the release pipeline runs
-before publishing.
+If `wasm-pack` is not installed, `wasm:local` logs a warning and continues with
+the published WASM package so UI-only contributors are not blocked. At runtime,
+`WasmEngineAdapter` checks `engine_version()` and throws an error if the loaded
+WASM module is older than the `dataflow-ui` version.
 
 ## Before You Open a Pull Request
 
-CI runs these and treats warnings as errors, so run them locally before you
-push:
+CI treats all compiler, Clippy, and rustdoc warnings as errors. Run these
+checks locally before pushing:
 
 ```bash
 cargo fmt --all
@@ -127,25 +94,18 @@ cargo test --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 ```
 
-`--all-targets` covers examples, tests, and benches. `--all-features` covers the
-`wasm-web` feature, which cargo otherwise skips. The second clippy line lints
-the root's **default** build, which `cargo add dataflow-rs` delivers, and which
-`--workspace` skips because of Cargo feature unification.
+- `--all-targets` checks examples, tests, and benchmarks.
+- `--all-features` includes the `wasm-web` feature.
+- The second `cargo clippy` command checks the root crate with its **default**
+  features.
+- `cargo doc` catches broken intra-doc links and unescaped generics in doc
+  comments. Every public item must have a doc comment (`missing_docs`) and
+  every public type must implement `Debug` (`missing_debug_implementations`).
 
-Run the `cargo doc` line as well. Clippy does not lint rustdoc, so `cargo doc`
-catches broken intra-doc links, links from public docs into private items, and
-unbackticked generics like `Arc<Logic>` that rustdoc parses as HTML tags. CI
-runs `cargo doc` under `-D warnings`. `src/lib.rs` also warns on `missing_docs`
-and `missing_debug_implementations`, so every public item needs a doc comment
-and every public type needs a `Debug` implementation.
+Workspace lint rules are configured in `[workspace.lints]` in the root
+`Cargo.toml` and inherited by all crates.
 
-Lint *policy* lives in `[workspace.lints]` in the root `Cargo.toml` and is
-inherited by every member, so a bare `cargo clippy` and rust-analyzer
-enforce what CI enforces. Adding a lint there means fixing every existing
-violation in the same change; CI's `-D warnings` gives no grace period.
-
-The root has checks of its own beside the workspace-wide ones. CI runs all of
-them; run the ones your change touches:
+Additional targeted checks run in CI depending on what you changed:
 
 ```bash
 cargo clippy -p dataflow-rs-derive --all-targets -- -D warnings
@@ -157,19 +117,13 @@ for f in datetime tensor budget; do
 done
 ```
 
-The `ts` run holds
-`bindings/dataflow.d.ts`, generated from the wire types, to the committed
-file, doc comments included: a doc edit on a wire type means regenerating it
-with `DATAFLOW_TS_WRITE=1 cargo test --features ts --test ts_types`. The
-per-feature loop exists because each cargo feature (`datetime`, `tensor`,
-`budget`) must pass alone, not only under `--all-features`.
+- If you change a wire type or its doc comments, regenerate
+  `bindings/dataflow.d.ts` with:
+  `DATAFLOW_TS_WRITE=1 cargo test --features ts --test ts_types`
+- If you modify `src/state/`, run the full state-model test suite:
+  `DATAFLOW_DEEP=1 cargo test --lib state::`
 
-`cargo test` at the root must stay under a minute, rebuild included. The
-run-context model test runs once in the default build, at 150 sequences per
-tuning; `DATAFLOW_DEEP=1 cargo test --lib state::` runs its full 2,000.
-Run it after any change under `src/state/`.
-
-If you touched `wasm/`:
+If you changed `wasm/`:
 
 ```bash
 cargo clippy -p dataflow-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
@@ -180,22 +134,11 @@ wasm-pack test --node
 wasm-pack build --target web --out-dir pkg --release && node scripts/verify-wasm.mjs pkg
 ```
 
-`wasm-pack test --node` runs the engine on wasm32 under Node; the release build
-plus `verify-wasm.mjs` is what the release pipeline runs, and it checks that
-the package's `.d.ts` carries the engine's wire types.
-
-If you touched `ui/`:
+If you changed `ui/`:
 
 ```bash
 cd ui && npm ci && npm run wasm:local && npm run lint && npm test && npm run build:lib
 ```
-
-`npm test` is vitest over the engine `wasm:local` overlaid: the trace helpers
-over real runs, and the debugger rendering a failing run.
-
-`lint` runs with `--max-warnings 0`, so a single warning fails CI; `build:lib`
-is `tsc && vite build`, so it type-checks the whole package as well as producing
-the artifact, and its `postbuild:lib` hook verifies the emitted `lib.d.ts`.
 
 If you changed dependencies:
 
@@ -203,7 +146,7 @@ If you changed dependencies:
 cargo deny --all-features check
 ```
 
-If you touched anything under `src/`, confirm you have not raised the MSRV:
+If you changed code under `src/`, verify that it still builds on the MSRV:
 
 ```bash
 rustup toolchain install 1.98
@@ -212,41 +155,26 @@ cargo +1.98 check --workspace --all-targets --all-features --locked
 
 ## Documentation
 
-The mdBook source lives in `docs/src/`; `docs/book/` is generated output and is
-not tracked. To preview:
+The mdBook source lives in `docs/src/` (`docs/book/` is generated output and is
+not tracked in git). To preview the book locally:
 
 ```bash
 mdbook serve docs
 ```
 
-Every Rust snippet in **both** `README.md` and `docs/src/` compiles against
-the crate at the root, through the `dataflow-docs-tests` workspace member:
-
-- `README.md`: as `ReadmeDoctests` in `docs-tests/src/lib.rs`.
-- `docs/src/**.md`: through the same crate, which includes each book page with
-  `#[doc = include_str!(…)]`. Its `tests/coverage.rs` fails if a page is
-  missing from the page list.
-
-(`mdbook test` cannot do this. It only passes `-L` to rustdoc, and an
-edition-2018+ `use dataflow_rs::…` needs `--extern`, which mdBook has no flag
-for. Routing through Cargo makes the crate resolvable. The crate is separate
-from the root because `docs/` is not shipped in the published package.)
-
-So an edit to either can break the build:
+Every Rust code block in `README.md`, `derive/README.md`, and `docs/src/` is
+compiled and run as a doctest via the `dataflow-docs-tests` crate, and every
+JSON workflow snippet is validated by `tests/it/repository_definitions.rs`:
 
 ```bash
 cargo test -p dataflow-docs-tests
+cargo test --test it repository_definitions
 ```
 
-Three conventions when writing snippets:
+Follow these conventions when writing documentation snippets:
 
-- **Every Rust fence compiles.** Do not tag a fence `ignore`: an `ignore` is an
-  unverified claim in user-facing docs. A snippet that would not compile on
-  its own gets a hidden preamble instead.
-
-- **Fragments need a hidden preamble.** Lines prefixed with `# ` are compiled by
-  rustdoc but hidden from readers by mdBook, so a snippet that assumes an
-  `engine` or `message` binding can declare one invisibly:
+- **Every Rust code block must compile.** Do not use `ignore`. Use hidden `# `
+  setup lines if a snippet needs imports or surrounding context:
 
   ```text
   # use dataflow_rs::{Engine, Message, RunOptions};
@@ -256,30 +184,23 @@ Three conventions when writing snippets:
   # }
   ```
 
-  A hidden wrapper that is never called type-checks the snippet without
-  executing it, which suits examples containing placeholder JSON
-  like `"tasks": [...]`. A snippet that shows a value asserts it, so the
-  doctest verifies what the prose claims.
-
-- **Tag every other fence with its language.** Unlabelled fences (```` ``` ````
-  with no language) are treated as **Rust** by rustdoc. Tag definitions `json`,
-  commands `bash`, manifests `toml`, and ASCII diagrams and sample output
-  `text`. Only ```` ```rust ```` fences are compiled, so the JSON in a page is
-  not checked; read it against the definition types in `src/def/types.rs`.
+- **Always specify a language on code fences.** Rustdoc treats unlabeled
+  ```` ``` ```` fences as Rust code. Tag JSON snippets with `json` (or `jsonc`
+  if they contain `//` comments or `...` placeholders), shell commands with
+  `bash`, Cargo manifests with `toml`, and diagrams or plain output with `text`.
 
 ## The Corpus
 
-`corpus/cases/<area>/<name>.json` holds one case per behaviour: definitions,
-an engine configuration and the steps run against it. The engine's tests load
-them through the `dataflow-corpus` crate, which also holds an order-sensitive
-JSON value, normalisation, and independent models of the dot-path rules and
-of trace replay that the engine is held to. Every case type refuses unknown
-keys, so a typo fails loudly. See `corpus/README.md`.
+`corpus/cases/<area>/<name>.json` contains declarative test cases that verify
+engine behavior against golden files (`tests/golden/corpus/`). The
+`dataflow-corpus` crate also provides independent reference implementations of
+dot-path resolution and trace replay used by the test suite. See
+[corpus/README.md](corpus/README.md) for details.
 
 ## Benchmarks
 
-The root's examples include its thirteen benchmarks. Always build them with
-`--release`; a debug build measures nothing useful.
+The repository includes 13 benchmark examples. Always run them with
+`--release`:
 
 ```bash
 cargo run --example realistic_benchmark --release        # ISO 20022 -> SwiftMT-style workload
@@ -297,79 +218,51 @@ cargo run --example orion_connector --release            # Connector-shaped host
 cargo run --example observed_run --release               # The realistic workload with a counting observer
 ```
 
-Every benchmark checks its result before it times anything, so a workload
-that silently does less than it says fails rather than reporting a plausible
-number, and prints one machine-readable `GATE {...}` line last.
-`bench/gate.py` builds the examples, runs them round-robin and compares two
-builds, a base commit against a candidate. The examples share
-`examples/shared/`, which is not an example itself.
+Each benchmark verifies its output before timing and prints a machine-readable
+`GATE {...}` summary line at the end. You can compare two commits using
+`bench/gate.py`, or run a quick smoke check locally with:
 
-CI runs every example once, in smoke mode: `DATAFLOW_BENCH_SMOKE=1` makes a
-benchmark run its startup check, then a few iterations, and mark its `GATE`
-line `"smoke"`. Run it locally with `cargo build --examples` and `python3
-bench/gate.py smoke --bins target/debug/examples`. A new benchmark reads its
-iteration counts through `gate::count(full, smoke)` and is added to
-`bench/gate.py`'s `BENCHES`.
+```bash
+cargo build --examples
+python3 bench/gate.py smoke --bins target/debug/examples
+```
 
-Results carry roughly ±2–3% run-to-run noise plus occasional transient P99
-spikes. **Compare the mean of at least 3 runs** before claiming a regression or
-an improvement, and **interleave A/B runs**: running all the "before" runs and
-then all the "after" runs conflates the change with thermal drift. Build both
-binaries first, discard the first run of each as cold, and alternate. Include
-your machine's core count with any numbers you quote.
-
-Performance changes do not need to beat the baseline to be merged, but a PR that
-knowingly regresses the hot path should say so and explain the tradeoff.
+Benchmark results typically vary by ±2–3% between runs. When measuring
+performance changes, **interleave at least 3 A/B runs** after discarding a
+warmup run, and include your CPU/core count when sharing numbers in a PR.
 
 ## Commit Messages
 
-The repository follows [Conventional Commits](https://www.conventionalcommits.org/):
+We follow [Conventional Commits](https://www.conventionalcommits.org/):
 
 ```text
-feat(run): the run's deadline is checked at every host call
+feat(run): check run deadline before each host call
 fix(map): preserve array structure on nested writes
-docs: correct MSRV in installation guide
+docs: clarify error handling channels in quick start
 chore(deps): bump quick-xml to 0.42
 ```
 
-Release notes are generated from commit history, so a clear subject line ends up
-in front of users.
-
 ## Pull Requests
 
-**Which branch.** `main` is dataflow-rs 4.0; every change goes there.
+All changes target the `main` branch.
 
-1. Fork the repository and branch from `main`
-2. Make your change, with tests covering it
-3. Run the checks above
-4. Open a PR describing what changed and why
+1. Fork the repository and create a branch from `main`.
+2. Make your changes and add tests.
+3. Run the verification checks listed above.
+4. Add a brief entry under `[Unreleased]` in `CHANGELOG.md` for user-visible changes.
+5. Open a pull request explaining what changed and why.
 
-Add tests next to the code they cover in a `mod tests` block for unit-level
-changes. Behaviour that spans the engine goes in `tests/it/`, one test binary
-with a module per topic: the engine end to end (`run_basics.rs`,
-`run_loops.rs`, `host_calls.rs`, `fan_out.rs`, `deadline.rs`,
-`error_context.rs`, `observer.rs`, `trace.rs`, `acceptance.rs`), the
-definitions and the compiler (`parse.rs`, `compat.rs`, `compile.rs`,
-`checks.rs`, `fingerprint.rs`, `program.rs`, `registry.rs`,
-`repository_definitions.rs`), functions and their configs (`derive.rs`,
-`config_fields.rs`, `documents.rs`, `function_testing.rs`, `expr.rs`,
-`path.rs`, `operators.rs`), the wire shapes (`wire.rs`, `run_json.rs`), and
-the feature-gated `ops_budget.rs`. Pick the module whose topic already
-matches, and add a new one, listed in `tests/it/main.rs`, only for a new area.
-Run one with `cargo test --test it run_basics::`.
-
-A fixture more than one module needs belongs in `tests/it/support/`; every
-golden file goes through `support::golden`. Two tests are their own binaries
-and stay so: `tests/secrets_isolation.rs` installs the process's logger, and
-`tests/ts_types.rs` (built only under `ts`) is named in the bindings' header.
-
-CI skips docs-only and Markdown-only changes by design, so a PR
-touching only those paths will not show Rust checks.
+Where to add tests:
+- **Unit tests:** Add a `mod tests` block alongside the code you modified.
+- **Integration tests:** Add tests to the matching topic module under
+  `tests/it/` (for example, `run_basics.rs`, `host_calls.rs`, `compile.rs`,
+  `trace.rs`). Run a single module with `cargo test --test it run_basics::`.
+  Shared test helpers and golden file utilities live in `tests/it/support/`.
 
 ## Adding a Function
 
-A host function implements `Function` with a `#[derive(FunctionConfig)]`
-config, and a task names it by the name it is registered under:
+Custom host functions implement `Function` with a `#[derive(FunctionConfig)]`
+config struct and are registered on `EngineBuilder` by name:
 
 ```rust
 use dataflow_rs::datavalue::OwnedDataValue;
@@ -397,40 +290,29 @@ impl Function for MyFunction {
 }
 ```
 
-Write through `ctx.emit_default`, `ctx.emit` or `ctx.set`, so the audit trail's
-changes are recorded for you and the writes land only when the call returns
-`Ok`, and return the `Outcome` variant that matches intent rather than encoding
-control flow in a status code. `function::testing::call` runs one call through
-the real compile, overlay and layers, for a unit test without a workflow.
+Use `ctx.emit_default`, `ctx.emit`, or `ctx.set` to write back to the message
+so changes are tracked in the audit trail and rolled back automatically on
+error. You can unit-test a custom function directly without building a workflow
+using `function::testing::call`.
 
-The eight built-ins (`src/function/builtins/`) are different: they run inline
-on the run's view, their names are reserved, and each is part of the
-engine's contract, so adding one is a contract change, not a
-registration. It needs a case in the corpus, a row in `BUILTIN_FUNCTIONS`
-(which the wasm package's `engine_facts()` and the UI read), a page in
-`docs/src/built-in-functions/` and a row in the README's table.
+Built-in functions (`src/function/builtins/`) are part of the core engine
+specification and have reserved names. Adding a new built-in function requires
+adding corpus test cases, updating `BUILTIN_FUNCTIONS` (used by `engine_facts()`
+and the UI), and documenting the function in `docs/src/built-in-functions/` and
+`README.md`.
 
 ## Releases
 
-Releases are tag-gated and maintainer-run. Pushing to `main` runs CI and never
-publishes. A `v*` tag triggers `.github/workflows/release.yml`,
-which validates that the tag matches the workspace version and runs
-`scripts/check-versions.sh` (the same agreement check CI runs on every PR),
-so `wasm/` (its inherited version and its `dataflow-rs` requirement),
-`derive/`, `ui/` and the install snippets in `README.md` and `docs/src/` must
-agree, and `CHANGELOG.md` must have the version's section; then publishes the
-derive, the crate and both npm packages, and cuts a GitHub release whose notes
-are that section. The `CRATES_IO_TOKEN`
-secret needs the `publish-new` scope for a crate's first release, the
-derive's included. A release bumps `[workspace.package] version` and
-`ui/package.json`'s version and runs `scripts/check-versions.sh`; everything
-else follows. Contributors do not need to bump versions in a PR,
-but a user-visible change gets a line under `CHANGELOG.md`'s `[Unreleased]`.
+Releases are triggered by pushing a `v*` git tag and are run by maintainers via
+`.github/workflows/release.yml`. The workflow runs `scripts/check-versions.sh`
+to confirm that Cargo manifests, `ui/package.json`, install snippets in the
+docs, and `CHANGELOG.md` all match the tag version before publishing to
+crates.io and npm.
 
 ## Security
 
-Do not report vulnerabilities through public issues. See
-[SECURITY.md](SECURITY.md) for the private reporting process.
+Please do not report security vulnerabilities in public issues. See
+[SECURITY.md](SECURITY.md) for instructions on private disclosure.
 
 ## License
 

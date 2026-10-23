@@ -1,16 +1,15 @@
 # Quick Start
 
-Build your first workflow in minutes.
+Build and run your first workflow in a few minutes.
 
-> **Prerequisite reading:** conditions and mappings are written in
-> [JSONLogic](../advanced/jsonlogic.md). If you've never used it, skim the
-> *Data Access*, *Comparison Operators*, and *Conditionals* sections first;
-> they cover everything in the examples below.
+> **Prerequisite reading:** Workflow conditions and mappings use
+> [JSONLogic](../advanced/jsonlogic.md). If you are new to JSONLogic, skim the
+> *Data Access*, *Comparison Operators*, and *Conditionals* sections first—they
+> cover everything used in the examples below.
 
 ## Create a Simple Workflow
 
-You define workflows in JSON. A workflow is a list of tasks that run in order
-over a message.
+Workflows are defined in JSON. Each workflow contains an ordered list of tasks that process a message.
 
 ```rust
 use dataflow_rs::{Engine, Message};
@@ -18,9 +17,10 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // A workflow that loads the payload into `data.input` and then
-    // transforms it. Letting `parse_json` seed `data` is the idiomatic
-    // pattern: the payload itself is not part of the evaluation context.
+    // Define a workflow that copies the incoming payload into `data.input`
+    // and then constructs a greeting. Because `payload` is outside the
+    // JSONLogic evaluation context, starting with `parse_json` is the
+    // standard pattern.
     let workflow = json!({
         "id": "greeting",
         "name": "Greeting",
@@ -47,9 +47,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ]
     });
 
-    // The builder parses, compiles and links every definition. It fails
-    // with every issue of every rejected definition, so a typo or an
-    // unknown function surfaces here, never on the first message.
+    // The builder parses, compiles, and links every workflow definition.
+    // If any definition has an error (such as a typo or unknown function),
+    // `build()` fails upfront with detailed issues rather than failing at runtime.
     let engine = match Engine::builder().workflow_json(&workflow).build() {
         Ok(engine) => engine,
         Err(issues) => {
@@ -60,11 +60,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // A message from a JSON payload. `parse_json` copies it into
-    // `data.input` when the workflow runs.
+    // Create a message from a JSON payload. When the workflow runs,
+    // `parse_json` copies this payload into `data.input`.
     let mut message = Message::from_json(&json!({"name": "World"}));
 
-    // Run the message. A `Run` comes back on every outcome.
+    // Run the message through the engine. `run` always returns a `Run` report.
     let run = engine.run(&mut message).await;
 
     println!("status: {:?}", run.status());
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Running it prints:
+Running this program prints:
 
 ```text
 status: Completed
@@ -92,17 +92,17 @@ data: {"input":{"name":"World"},"greeting":"Hello, World!"}
 <div class="playground-widget" data-workflows='[{"id":"greeting","name":"Greeting","tasks":[{"id":"load","name":"Parse Payload","function":{"name":"parse_json","input":{"source":"payload","target":"input"}}},{"id":"greet","name":"Create Greeting","function":{"name":"map","input":{"mappings":[{"path":"data.greeting","logic":{"cat":["Hello, ",{"var":"data.input.name"},"!"]}}]}}}]}]' data-payload='{"name":"World"}'>
 </div>
 
-## Understanding the Code
+## How It Works
 
-1. **Workflow Definition** - A JSON object with an `id` and the `tasks` to run
-2. **Engine Creation** - `Engine::builder()` parses and lints each definition, compiles every expression and function config, and links them into a program; a rejected definition fails `build()` with its issues
-3. **Message Creation** - The input is the message's `payload`; its context (`data`, `metadata`, `temp_data`) starts empty
-4. **Running** - `engine.run(&mut message).await` evaluates each workflow's condition and runs the tasks of the ones that match
-5. **Result** - The `Run` says how it ended and which workflows ran; the message holds the transformed context, an audit entry per task and any errors
+1. **Workflow Definition** — A JSON object with a unique `id` and a list of `tasks` to execute.
+2. **Engine Creation** — `Engine::builder()` parses and validates each definition, compiles all JSONLogic expressions and function configs, and links them into an immutable program.
+3. **Message Creation** — `Message::from_json` places your input in `payload`, while the evaluation context (`data`, `metadata`, `temp_data`) starts empty.
+4. **Execution** — `engine.run(&mut message).await` evaluates each active workflow's condition in priority order and runs the tasks of matching workflows.
+5. **Inspecting Results** — `Run` reports the final `RunStatus` and per-workflow execution records, while `Message` holds the updated context, audit trail, and any recorded errors.
 
 ## Add Validation
 
-Extend your workflow with data validation:
+Next, add a `validation` task before the `map` task to ensure `data.input.name` is present:
 
 ```json
 {
@@ -149,14 +149,9 @@ Extend your workflow with data validation:
 }
 ```
 
-A failing `validation` records a `VALIDATION_ERROR` with the rule's message and
-returns status `400`, a rejection. A task's default `on_rejection` is
-`continue`, so without the policy `greet` would still run and greet a message
-with no name. `on_rejection: "halt"` ends the workflow at the failed
-validation; later workflows still run.
+When a `validation` rule fails, it records a `VALIDATION_ERROR` on `message.errors()` and returns status `400` (a **rejection**). Because a task's default `on_rejection` policy is `"continue"`, omitting `"on_rejection": "halt"` would allow `greet` to run even when validation fails. Setting `"on_rejection": "halt"` stops the current workflow immediately upon rejection while still allowing later workflows to run.
 
-Run the same definition over a payload with no name and the run tells you
-what happened:
+Here is what happens when you run that workflow with an empty payload:
 
 ```rust
 # use dataflow_rs::run::{RunStatus, WorkflowExit};
@@ -181,29 +176,24 @@ what happened:
 let mut message = Message::from_json(&json!({}));
 let run = engine.run(&mut message).await;
 
-// The run completed, with a record on the message.
+// The run finished, and recorded the validation error on the message.
 assert!(matches!(run.status(), RunStatus::CompletedWithErrors));
 let record = &message.errors()[0];
 assert_eq!(record.code, "VALIDATION_ERROR");
 assert_eq!(record.message, "Name is required");
 
-// The workflow halted at the validation: nothing was greeted.
+// The workflow halted at `validate_input`, so `greet` never ran.
 let workflow = run.workflows().next().expect("one workflow was considered");
 assert_eq!(workflow.exit, Some(WorkflowExit::Halted));
 assert!(message.context().get(&"data.greeting".parse().unwrap()).is_none());
 # }
 ```
 
-The `load` task is required because `payload` is outside the JSONLogic
-evaluation context. Without `parse_json`, `{"var": "data.name"}` resolves to
-`null` (which is falsy) and the validation rule fails on every message.
-`parse_json` copies the payload to `data.input`, so tasks read `data.input.…`.
-`Compiler::check` flags any literal `var` rooted at `payload` as a
-`PAYLOAD_VAR` defect.
+> **Why is `parse_json` needed first?** `payload` is not part of the JSONLogic evaluation context (`data`, `metadata`, `temp_data`). Without `parse_json`, `{"var": "data.input.name"}` evaluates to `null` (falsy) and validation fails on every message. In addition, `Compiler::check` flags any `{"var": "payload..."}` expression as a `PAYLOAD_VAR` defect.
 
 ## Next Steps
 
-- [Basic Concepts](./basic-concepts.md) - Understand the core architecture
-- [JSONLogic Reference](../advanced/jsonlogic.md) - Complete operator reference
-- [Map Function](../built-in-functions/map.md) - Learn about data transformation
-- [Validation](../built-in-functions/validation.md) - Learn about data validation
+- [Basic Concepts](./basic-concepts.md) — Understand the core architecture
+- [JSONLogic Reference](../advanced/jsonlogic.md) — Explore supported JSONLogic operators
+- [Map Function](../built-in-functions/map.md) — Learn how to transform data
+- [Validation](../built-in-functions/validation.md) — Learn how to validate data

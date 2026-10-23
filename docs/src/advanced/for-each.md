@@ -1,7 +1,8 @@
-# Fan-Out: One Call per Element
+# Fan-Out (`for_each`)
 
-A task's `for_each` runs its function once per element of an array (one model
-inference per participant, one HTTP call per recipient) as a single step.
+Adding `for_each` to a task invokes its host function once per element of an
+array (for example, running one model inference per participant or sending one
+HTTP request per recipient) as a single workflow step.
 
 ```json
 {
@@ -21,157 +22,149 @@ inference per participant, one HTTP call per recipient) as a single step.
 }
 ```
 
-Each call sees its participant at `temp_data.p` and its index at
-`temp_data.p_index`, writes its answer to `temp_data.move`, and the engine
-gathers the answers into `temp_data.moves` in participant order.
+In this example, each invocation sees its element at `temp_data.p` and its zero-based
+index at `temp_data.p_index`, writes its output to `temp_data.move`, and has its
+output collected by the engine into the `temp_data.moves` array in element
+order.
 
-## When to use it, and when a loop
+## When to Use `for_each` vs. `loop`
 
-A workflow [`loop`](./loops.md) replays the **whole task list** once per
-element, and a workflow has only one. `for_each` repeats **one task**. Use it
-when a single step needs to fan out, including inside a workflow that already
-loops for another reason.
+- A workflow [`loop`](./loops.md) repeats the **entire workflow task list**
+  sequentially for each iteration, and a workflow can have only one `loop`.
+- A task `for_each` repeats a **single host-function task** across an array of
+  elements (optionally concurrently via `max_concurrency`), and can be used
+  inside a workflow that already has a `loop`.
 
-## Fields
+## Configuration Fields
 
-| Field | Required | Default | Meaning |
+| Field | Required | Default | Description |
 |---|---|---|---|
-| `over` | **yes** | none | JSONLogic evaluated once. Must yield an array. |
-| `as` | **yes** | none | `temp_data` field holding the element in each call. The index is at `<as>_index` beside it. |
-| `max_concurrency` | no | `1` | Calls in flight at once. `1` runs them one at a time. |
-| `collect` | with `into` | none | Context path each call writes its result to. |
-| `into` | with `collect` | none | Context path that receives the results as an array, in element order. |
+| `over` | **Yes** | None | JSONLogic expression evaluated once before fan-out. Must produce an array. |
+| `as` | **Yes** | None | `temp_data` key bound to the current element in each call. The element's index is bound alongside it at `temp_data.<as>_index`. |
+| `max_concurrency` | No | `1` | Maximum number of element calls allowed to run concurrently (`1` runs them sequentially). |
+| `collect` | With `into` | None | Context path where each element call writes its result. |
+| `into` | With `collect` | None | Context path where the engine writes the collected results array, in element order. |
 
-Only host functions fan out. The built-ins (`map`, `validation` and the
-rest) run inline, and JSONLogic's `map`, `filter` and `reduce` already cover
-per-element transforms of an array; `for_each` on a built-in is refused.
+Only custom host functions support `for_each`. Built-in functions (`map`,
+`validation`, etc.) run inline and already have JSONLogic array operators (`map`,
+`filter`, `reduce`) for per-element transformations; placing `for_each` on a
+built-in function or a task group is rejected at compile time.
 
-## What happens
+## Execution Lifecycle
+
+When a task with `for_each` runs, the engine performs these steps:
 
 ```text
-1. evaluates the task's condition, once   -> false: no call, the task is skipped
-2. evaluates `over`, once                  -> not an array: the task fails
-3. runs one call per element, up to max_concurrency at a time,
-   each over the run's context with its element bound beneath its own writes
-4. folds the calls back, in element order, stopping at the first that
-   fails the task or halts:
-     the errors the call recorded,
-     then its writes,
-     then its result at into[i],
-     then its audit entry
-5. applies the task's terminal and halting policies to the fan-out as a whole
+1. Evaluate the task's `condition` once  -> if false, skip the entire task
+2. Evaluate `over` once                  -> if not an array, fail the task
+3. Execute one function call per element (up to `max_concurrency` in flight at once),
+   each reading from the shared context with its element bound in an isolated overlay
+4. Commit results in element order (0, 1, 2, ...), stopping at the first element
+   that fails the task or halts:
+     - append any error records from the call
+     - apply the call's context writes
+     - copy the value at `collect` into `into[i]`
+     - append the element's audit entry
+5. Apply the task's `terminal` and halting policies to the fan-out as a whole
 ```
 
-## Calls are isolated
+## Call Isolation and Determinism
 
-Every call runs over the run's context **as it was before the fan-out**,
-with its own element and index bound beneath its own writes. No call sees
-another's writes, even when they run one at a time, and no call copies the
-context: the bindings sit in the call's view only, and nothing reaches the
-message until every call has finished. Then the engine folds each back in
-element order.
+Every element call sees the message context **as it was before the `for_each`
+task started**, with its own `temp_data.<as>` and `temp_data.<as>_index`
+bindings layered underneath its own buffered writes.
 
-Isolation makes `max_concurrency` a timing knob only. At `1` and at `8` the
-message comes out the same: the same results, the same writes, the same audit
-entries in the same order.
+- **No cross-element visibility:** Element 3 never sees writes made by element
+  2, even when `max_concurrency` is `1`.
+- **Zero context cloning:** Element bindings live only in each call's read view;
+  the message context itself is not cloned per element.
+- **Deterministic output regardless of concurrency:** Because writes are buffered
+  per call and committed in strict element order (`0..n`) after all calls finish,
+  `max_concurrency: 1` and `max_concurrency: 8` produce the exact same context
+  state, collected array, and audit trail order.
 
-Two consequences for a function author:
+For custom function authors, this means:
+- **Write through `Ctx`:** All writes made with `ctx.set`, `ctx.emit`, and
+  `ctx.remove` are replayed in element order during the commit phase.
+- **Do not rely on state from earlier elements:** Each element call starts from
+  the pre-task context snapshot.
+- **Element bindings are temporary:** `temp_data.<as>` and
+  `temp_data.<as>_index` exist only in each call's view and are not written to
+  the message after the task completes (unless your function explicitly calls
+  `ctx.set` on those paths). You can also read the current element index in Rust
+  via `ctx.info().element_index`.
 
-- **Write through `Ctx`.** The fold replays the writes a call made with
-  `set`, `emit` and `remove`, at their own paths, in order. There is no
-  other way to write.
-- **Don't count on an earlier element's writes.** Element 3 sees the context
-  as it was before the fan-out, not after element 2.
+## Collecting Results (`collect` and `into`)
 
-The bindings live only in each call's view, so `temp_data.<as>` and
-`temp_data.<as>_index` are not left behind after the task, unless a function
-writes under one of them itself; the engine replays that write like any other.
-`collect` may not name a path under either.
+When `collect` and `into` are configured, each element call writes its output to
+the `collect` path, and the engine gathers those values into an array at `into`.
+Element `i`'s result is always placed at `into[i]`.
 
-A function can also ask for its element's index directly:
-`ctx.info().element_index` is `Some(i)` inside a fan-out and `None`
-everywhere else.
+`into[i]` is set to `null` if element `i`:
+- Failed (returned `Err` or a status `>= 400`)
+- Did not write a value to `collect`
+- Never ran (or was not committed) because an earlier element failed the task or
+  halted
 
-## Results
+Because each call's writes to `collect` are also replayed onto the message in
+element order, `collect` holds the last committed element's value after the task
+completes. If `over` evaluates to an empty array `[]`, no calls run and `into`
+is set to `[]`.
 
-`collect` names the slot each call writes; `into` names the array the results
-land in. Element `i`'s result is always at `into[i]`, and it is `null` when the
-element:
+`collect` and `into` are optional: if your function performs side effects (such
+as publishing a notification per recipient) or writes to distinct paths per
+element, you can omit both fields.
 
-- failed: returned an `Err`, or a status of `400` or more,
-- never ran, or was never folded, because an earlier element failed the task
-  or halted, or
-- wrote nothing at `collect`.
+## Error Handling and Halting in `for_each`
 
-`collect`'s own writes are replayed like any other, so after the task it holds
-the last element's value.
+During fan-out execution, individual element failures and rejections are governed
+by the task's `on_failure` and `on_rejection` policies, while workflow-halting
+actions (`terminal: true`, `on_rejection: "halt"`, and `on_failure: "halt"`) are
+applied once after all elements have been committed:
 
-Without `collect` and `into`, the engine only replays the calls' writes. That
-suits a fan-out whose calls have side effects but no result, such as one
-message published per recipient.
+- **With `on_failure: "continue"` or `"halt"`**: If an element fails, its error
+  is recorded, its slot in `into[i]` is set to `null`, and the remaining
+  elements continue normally. If the policy is `"halt"`, the workflow stops
+  after all elements finish and commit.
+- **With `on_failure: "fail"` (default)**: If an element fails, the task fails.
+  No new element calls are started, any in-flight calls are allowed to finish,
+  and the commit step stops at the first failing element index (subsequent
+  elements do not commit their context writes, though external side effects such
+  as network requests already in flight may have occurred).
+- **When an element returns `Outcome::Halt`**: No new element calls are started,
+  the commit step stops after committing the halting element (discarding context
+  writes from higher-indexed elements), and the workflow halts.
+- **Non-array `over`**: If `over` evaluates to `null` or a non-array value, the
+  task fails immediately before invoking any element calls.
+- **Deadlines and cancellation**: If the run's deadline expires or its
+  cancellation token is triggered during a fan-out, uncommitted element writes
+  are discarded, recorded errors are kept, and the run ends with `TimedOut` or
+  `Cancelled`.
 
-An empty `over` runs no call and sets `into` to `[]`.
+## Audit Trail and Observability
 
-## Failures
-
-Each element is decided under the task's policies with everything that could
-halt taken out: an element's `on_failure` is `"fail"` when the task's is
-`"fail"` and `"continue"` otherwise, its `on_rejection` is `"continue"`, and
-`terminal` is off. The task's own `terminal`, `on_rejection: "halt"` and
-`on_failure: "halt"` apply once, to the whole fan-out, after the fold.
-
-- **Under `on_failure: "continue"` or `"halt"`**, a failed element records
-  its error, leaves `null` at its index, and the fan-out carries on; with
-  `"halt"` the workflow then stops once the fan-out is folded.
-- **Under the default `on_failure: "fail"`**, a failed element fails the task.
-  No further call starts; calls already running finish. The fold stops at
-  the failing element, so the elements after it contribute nothing, although
-  their external side effects, such as an HTTP call already sent, may already
-  have happened.
-
-A call that returns `Outcome::Halt` also stops new calls, and the fold
-stops at the halting element: its own errors, writes, result and audit entry
-land, and the elements after it contribute nothing, however many had already
-finished under `max_concurrency`, side effects included. The workflow halts
-once the fan-out is folded.
-
-`terminal` applies to the **whole** fan-out: a terminal task halts after its
-last element. `"on_rejection": "halt"` halts after the fan-out if any
-element was rejected.
-
-An `over` that does not evaluate to an array (`null` included) fails the task
-the way a function error would, before any call.
-
-A fan-out the run's deadline or cancellation token cuts short folds
-nothing, finished elements included: the records each call added are kept,
-the task is recorded once, and the run ends `TimedOut` or `Cancelled`.
-
-## Records
-
-A fan-out records one entry **per element**, each stamped with its
-`element_index`:
+A `for_each` task records one `AuditEntry` **per committed element**, stamped
+with `element_index`:
 
 ```json
 { "workflow_id": "turn", "task_id": "infer", "status": 200,
   "element_index": 3, "changes": [ ] }
 ```
 
-The same field appears on trace steps and on the errors an element
-produced. An ordinary task omits it entirely, so its JSON is unchanged. Inside
-a looping workflow an entry carries both `loop_counter` and `element_index`.
+The same `element_index` field is included on trace steps and error records
+produced by that element. Inside a looping workflow, entries carry both
+`loop_counter` and `element_index`.
 
-While `capture_changes` is on, each element's entry carries that element's
-writes, so a large fan-out inside a long loop multiplies the cost described in
-[Memory in long loops](./loops.md#memory-in-long-loops).
+When `capture_changes` is enabled, each element's audit entry stores the changes
+made by that element. For large fan-outs inside long loops, consider disabling
+`capture_changes`; see [Memory in Long Loops](./loops.md#memory-in-long-loops).
 
-`metadata.progress` is written after every element's entry. An empty or
-failing `over` still records one entry, without an `element_index`, so the
-task always leaves its progress behind.
+`metadata.progress` is updated after each element's entry. If `over` is empty or
+fails to evaluate to an array, the task records a single audit entry without
+`element_index`. Observers receive one `TaskFinished` event per element call,
+each timed individually.
 
-Observers receive one `TaskFinished` event per element, each timed on its own
-call.
-
-## Example
+## Complete Example
 
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -182,11 +175,11 @@ use serde_json::json;
 
 #[derive(FunctionConfig)]
 struct GreetConfig {
-    /// Who to greet: in the workflow, `{"var": "temp_data.p.name"}`.
+    /// Who to greet: configured as `{"var": "temp_data.p.name"}` in the workflow.
     name: Expr<String>,
 }
 
-/// Greets the participant bound at `temp_data.p`.
+/// Greets the person bound at `temp_data.p`.
 struct Greet;
 
 impl Function for Greet {
@@ -222,9 +215,9 @@ engine.run(&mut message).await;
 
 let context = message.to_json()["context"].clone();
 assert_eq!(context["data"]["greetings"], json!(["hello, ada", "hello, grace"]));
-// The bindings were never written to the message.
+// Element bindings are scoped to each call's view and not left in `temp_data`:
 assert!(context["temp_data"].get("p").is_none());
-// One entry per element, in element order.
+// One audit entry per element, in element order:
 let elements: Vec<Option<usize>> = message.audit().iter().map(|e| e.element_index).collect();
 assert_eq!(elements, [Some(0), Some(1)]);
 # });
@@ -232,28 +225,24 @@ assert_eq!(elements, [Some(0), Some(1)]);
 
 ## Performance
 
-A fan-out copies nothing: each call reads the run's one view with its element
-bound beneath it, and the fold splices each call's writes in. The `fan_out`
-benchmark, 100 elements over a 2 MiB context, measured against 3.15 before
-4.0's release at well under 1% of 3.15's time per message, since 3.15 copied
-the context once per element. See [Performance](./performance.md).
+Because `for_each` binds each element in a lightweight overlay over the shared
+context view rather than cloning the message context per element, fanning out
+over 100 elements on a multi-megabyte context allocates only the per-element
+writes. See [Performance](./performance.md) for benchmark results.
 
 ## Validation
 
-`def::parse` reports each of these as `INVALID_FOR_EACH`, Rejected, at the
-offending key, so `Engine::builder().build()` refuses the workflow:
+`def::parse` validates `for_each` configurations at compile time and reports any
+violation as `INVALID_FOR_EACH` (`Severity::Rejected`) at the offending key:
 
-- an `over` that is a scalar literal, which could never be an array;
-- a missing or malformed `as`;
-- `max_concurrency` of `0`;
-- `collect` without `into`, or `into` without `collect`;
-- a `collect` or `into` that is not a path below `data`, `metadata` or
-  `temp_data`, or that names a root;
-- a `collect` overlapping `temp_data.<as>` or `temp_data.<as>_index`, since the
-  result would be replayed into the message and leave the binding behind;
-- an `into` overlapping `collect`, `temp_data.<as>` or `temp_data.<as>_index`;
-- `for_each` on a built-in function, or on a task group.
+- `over` is a scalar literal that can never evaluate to an array
+- `as` is missing or not a valid non-empty path
+- `max_concurrency` is `0`
+- `collect` is specified without `into`, or `into` without `collect`
+- `collect` or `into` is not a valid sub-path under `data`, `metadata`, or
+  `temp_data` (or points directly to a root)
+- `collect` overlaps with `temp_data.<as>` or `temp_data.<as>_index`
+- `into` overlaps with `collect`, `temp_data.<as>`, or `temp_data.<as>_index`
+- `for_each` is placed on a built-in function or on a task group
 
-A parsed definition is read-only (its fields are read through accessors),
-so these rules hold for every fan-out the compiler sees. See
-[Authoring-Time Validation](./authoring-validation.md).
+See [Authoring-Time Validation](./authoring-validation.md) for more details.

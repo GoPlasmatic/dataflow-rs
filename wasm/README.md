@@ -3,7 +3,7 @@
 
   # @goplasmatic/dataflow-wasm
 
-  **WebAssembly bindings for dataflow-rs workflow engine**
+  **WebAssembly bindings for the dataflow-rs workflow engine**
 
   [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
   [![npm](https://img.shields.io/npm/v/@goplasmatic/dataflow-wasm.svg)](https://www.npmjs.com/package/@goplasmatic/dataflow-wasm)
@@ -11,16 +11,16 @@
 
 ---
 
-The [dataflow-rs](https://github.com/GoPlasmatic/dataflow-rs) 4.0 engine compiled to WebAssembly for the browser and Node. `WasmEngine` runs messages through workflow definitions and resolves with the message, a run report, and an optional trace. The same definitions run on a Rust backend unchanged.
+The [dataflow-rs](https://github.com/GoPlasmatic/dataflow-rs) 4.0 rules engine compiled to WebAssembly for browsers and Node.js. `WasmEngine` processes messages through JSON workflow definitions and returns the updated message, a run report, and an optional execution trace. The exact same workflow definitions run unchanged on a Rust backend.
 
 ## Features
 
-- **Compiled Rust engine**: built from the root crate for `wasm32-unknown-unknown` with `datetime` and `ExprEngineBuilder::all_operators` (all optional operator families except `tensor`)
-- **Built-in functions**: `parse_json`, `parse_xml`, `map`, `validation`, `filter`, `log`, `publish_json`, `publish_xml`
-- **Typed end to end**: `.d.ts` declarations include the engine's wire types (`Message`, `Run`, `Trace`, `Issue`, and related types) generated from the Rust crate
-- **Resolves on every status**: stopped, timed-out, and failed runs resolve with `run.status` describing the outcome
-- **Replayable traces**: traces record per-step changes, and `contexts(trace)` or `TraceReplay` reconstructs the context after any step
-- **Definition validation**: `check` and `parse` report definition issues at their authored paths before execution
+- **Compiled Rust engine**: Built from the root crate for `wasm32-unknown-unknown` with `datetime` and `ExprEngineBuilder::all_operators` (all optional JSONLogic operator families except `tensor`).
+- **Built-in functions**: `parse_json`, `parse_xml`, `map`, `validation`, `filter`, `log`, `publish_json`, `publish_xml`.
+- **End-to-end TypeScript types**: `.d.ts` declarations include the engine's wire types (`Message`, `Run`, `Trace`, `Issue`, and related types) generated directly from the Rust crate.
+- **Resolves on every status**: Stopped, timed-out, and failed runs resolve normally with `run.status` describing how the run finished.
+- **Replayable traces**: Traces record per-step context diffs, and `contexts(trace)` or `TraceReplay` reconstructs the full context after any step.
+- **Definition validation**: `check` and `parse` report definition issues at their exact JSON paths before execution.
 
 ## Installation
 
@@ -33,7 +33,7 @@ npm install @goplasmatic/dataflow-wasm
 ```typescript
 import init, { WasmEngine } from '@goplasmatic/dataflow-wasm';
 
-// Instantiate the module once, before any other call.
+// Initialize the WebAssembly module once before calling any other API.
 await init();
 
 const engine = new WasmEngine([
@@ -41,7 +41,7 @@ const engine = new WasmEngine([
     id: 'greeting',
     tasks: [
       {
-        // The payload is not part of the evaluation context: copy it into `data` first.
+        // Copy the incoming payload into `data.input` so JSONLogic expressions can read it.
         id: 'parse',
         function: { name: 'parse_json', input: { source: 'payload', target: 'input' } },
       },
@@ -61,18 +61,18 @@ const engine = new WasmEngine([
 const { message, run } = await engine.run({ name: 'World' });
 
 console.log(run.status);                    // "completed"
-// A context root is `JsonValue`: narrow it to read a key under strict TS.
+// Narrow the `JsonValue` context root to access typed fields under strict TypeScript.
 const data = message.context.data as { greeting: string };
 console.log(data.greeting);                 // "Hello, World"
 ```
 
-The payload is any JSON value. An object is stored as the object it is, and a `parse_json` task reading `payload` copies it; a string stays a string, and `parse_json` parses it. Either way the payload is not in the JSONLogic evaluation context, which is `{data, metadata, temp_data}` only: `{"var": "payload.name"}` resolves to nothing. To skip the parse step, seed `data` directly: `engine.run(null, { data: { name: 'World' } })`.
+The `payload` can be any JSON value. If you pass an object, it is stored as an object and `parse_json` copies it into `data`; if you pass a JSON string, `parse_json` parses it first. Note that `payload` is separate from the JSONLogic evaluation context (`{ data, metadata, temp_data }`), so `{"var": "payload.name"}` will not resolve to the payload. If you want to skip the `parse_json` step, pass your initial data directly via `options`: `engine.run(null, { data: { name: 'World' } })`.
 
 ## API
 
 ### `new WasmEngine(workflows, options?)`
 
-Takes the definitions as JSON text or as an array, and `options` with an optional secret store:
+Accepts workflow definitions as a JSON string or an array of workflow objects, plus an optional `options` object that can provide secrets:
 
 ```typescript
 const engine = new WasmEngine(workflows, {
@@ -80,9 +80,9 @@ const engine = new WasmEngine(workflows, {
 });
 ```
 
-Workflows read a secret through `{"secret": "api_key"}`. The values are held by the engine and never by a message: nothing of the store appears in a message, a trace or an error. A workflow that reads a name the store does not have is refused when the engine is built.
+Workflows read secrets using the `{"secret": "api_key"}` operator. Secrets are stored on the engine and never enter the message, so they never appear in serialized messages, traces, or error records. If a workflow references a secret that is not in the store, or attempts to write a secret into the message, `new WasmEngine` rejects the definition at build time.
 
-A definition the engine refuses throws an `EngineError`, a JS `Error` with `code: "REJECTED"` and `issues`, every issue the definitions have, each at its authored path. A malformed argument throws `code: "INVALID_ARGUMENT"`:
+If any workflow definition is invalid, `new WasmEngine` throws an `EngineError` (a JavaScript `Error` with `code: "REJECTED"` and an `issues` array listing every problem at its authored JSON path). Passing a malformed argument throws an `EngineError` with `code: "INVALID_ARGUMENT"`:
 
 ```typescript
 import type { EngineError } from '@goplasmatic/dataflow-wasm';
@@ -100,38 +100,42 @@ try {
 }
 ```
 
-An `Issue` is `{ code, severity, path, step_kind, step_id, field, message }`, with `severity` one of `"REJECTED"`, `"DEFECT"` or `"ADVISORY"`. Advisories do not stop a definition from loading; they are reported with the rest when another issue does.
+Each `Issue` has the shape `{ code, severity, path, step_kind, step_id, field, message }`, where `severity` is `"REJECTED"`, `"DEFECT"`, or `"ADVISORY"`. Advisories do not prevent a workflow from loading, though they are included in `issues` if another issue causes a rejection.
 
 ### `engine.run(payload, options?)`
 
-Runs one message and resolves with `{ message, run, trace? }` on every status. The promise rejects only for a malformed argument (`"INVALID_ARGUMENT"`).
+Runs a single message through the engine and resolves with `{ message, run, trace? }` regardless of the run outcome. The promise rejects only when given a malformed argument (`"INVALID_ARGUMENT"`).
 
-| Option | Type | What it does |
+| Option | Type | Description |
 |---|---|---|
-| `id` | `string` | The message id. A UUID v7 unless set. |
-| `data` | `JsonValue` | The `data` root the message starts with. An object, else ignored. |
-| `metadata` | `JsonValue` | The `metadata` root the message starts with. An object, else ignored. |
-| `channel` | `string` | The channel whose workflows run. Every active workflow when unset. |
-| `routing_bucket` | `number` | The rollout bucket, 0 to 99 (a hash `% 100`). Every rollout admits an unset one. |
-| `capture_changes` | `boolean` | Record each task's changes in the audit trail. On by default. |
-| `audit` | `"full" \| "off" \| { last: number }` | Which audit entries the message keeps. `"full"` by default. |
-| `trace` | `boolean \| TraceOptions` | Trace the run. Off by default. `true` takes the default options. |
-| `timeout_ms` | `number` | A deadline from the call. The run then ends `"timed_out"` with its partial message and trace. |
+| `id` | `string` | Message ID (defaults to a generated UUID v7). |
+| `data` | `JsonValue` | Initial `data` object (ignored if not an object). |
+| `metadata` | `JsonValue` | Initial `metadata` object (ignored if not an object). |
+| `channel` | `string` | Run only active workflows in this channel (runs all active workflows when omitted). |
+| `routing_bucket` | `number` | Canary rollout bucket from `0` to `99` (all rollouts match when omitted). |
+| `capture_changes` | `boolean` | Record old/new values for each write in the audit trail (`true` by default). |
+| `audit` | `"full" \| "off" \| { last: number }` | How many audit entries to keep on the message (`"full"` by default). |
+| `trace` | `boolean \| TraceOptions` | Record an execution trace (`false` by default; `true` uses default `TraceOptions`). |
+| `timeout_ms` | `number` | Deadline in milliseconds; if exceeded, the run finishes with status `"timed_out"`. |
 
-`TraceOptions` is `{ timings?, changes?, redact?, max_bytes? }`: `timings` times each call into its step's `elapsed_us` (off by default); `changes` records each step's changes so the trace replays (on by default); `redact` names context paths whose values read `null` in the trace, such as `"metadata.headers"`, while the message keeps the real values; `max_bytes` caps what the trace holds, and the step that would cross it, and every later one, keeps everything but its changes, with `trace.truncated` set.
+`TraceOptions` accepts `{ timings?, changes?, redact?, max_bytes? }`:
+- `timings`: Measure each task's duration in `elapsed_us` (`false` by default).
+- `changes`: Record per-step changes so contexts can be replayed (`true` by default).
+- `redact`: Array of context paths (such as `"metadata.headers"`) whose values are replaced with `null` in the trace while keeping their real values on the message.
+- `max_bytes`: Maximum byte budget for trace changes. Once exceeded, subsequent steps omit their `changes` and `trace.truncated` is set to `true`.
 
-`message` is `{ id, payload, context, audit_trail, errors }`, with `context` holding `data`, `metadata` and `temp_data`. The engine stamps `metadata.processed_at` and `metadata.engine_version` at the start of every run and writes `metadata.progress` after every task.
+The returned `message` has the shape `{ id, payload, context, audit_trail, errors }`, where `context` contains `data`, `metadata`, and `temp_data`. At the start of every run, the engine sets `metadata.processed_at` and `metadata.engine_version`, and updates `metadata.progress` after each executed task.
 
-`run` is how the run ended:
+The returned `run` summarizes how execution finished:
 
 ```typescript
 interface Run {
   status: 'completed' | 'completed_with_errors' | 'stopped' | 'timed_out' | 'cancelled';
   error?: DataflowError;        // present only when status is "stopped"
-  retryable: boolean;           // true for a timeout, and for a stop whose error says so
-  partial: boolean;             // did the run end before every workflow was considered?
-  matched: number;              // how many workflows were selected and ran
-  workflows: WorkflowRecord[];  // every workflow considered, in program order
+  retryable: boolean;           // true for timeouts and retryable stop errors
+  partial: boolean;             // true if execution stopped before evaluating all workflows
+  matched: number;              // number of workflows that matched and ran
+  workflows: WorkflowRecord[];  // per-workflow execution records in priority order
 }
 
 interface WorkflowRecord {
@@ -139,16 +143,16 @@ interface WorkflowRecord {
   index: number;
   selection: 'ran' | 'skipped_by_condition' | 'condition_failed' | 'skipped_by_rollout';
   error?: DataflowError;        // present only when selection is "condition_failed"
-  sweeps: number;               // one for a workflow that ran once; one per sweep for a loop
-  exit: 'completed' | 'halted' | 'failed' | 'stopped' | null;  // null when it did not run
+  sweeps: number;               // 1 for normal runs, or the iteration count for a loop
+  exit: 'completed' | 'halted' | 'failed' | 'stopped' | null;  // null when not selected
 }
 ```
 
-`completed_with_errors` is a run that was not stopped but recorded errors on the message, such as a `validation` task's failed rules.
+A status of `completed_with_errors` means the run finished without stopping, but one or more tasks recorded errors on `message.errors` (for example, failed `validation` rules).
 
-### Reading a failing run
+### Inspecting a Failed Run
 
-A task failure under the default policies stops the run. The promise still resolves; the status and the trace say what happened:
+Under the default failure policy, an unhandled task error stops the run. `engine.run` still resolves normally—inspect `run.status`, `run.error`, and `trace` to see what went wrong:
 
 ```typescript
 const { message, run, trace } = await engine.run(payload, { trace: true });
@@ -166,60 +170,57 @@ for (const record of run.workflows) {
   console.log(record.id, record.selection, record.exit);
 }
 
-// Errors tolerated by a policy are on the message, not the run.
+// Errors from tasks that continued (such as validation rejections) are on `message.errors`.
 console.log(message.errors);
 ```
 
-### The trace and its replay
+### Replaying Execution Traces
 
-A trace is `{ initial, steps, truncated }`: the context before any workflow, redacted as asked, and one step per call, skip, failure and engine write. A step carries no message snapshot; it carries its `changes`, and the package replays them:
+A `Trace` has the shape `{ initial, steps, truncated }`, containing the initial context before any workflow ran (with any configured redactions applied) and one step per task execution, skip, failure, or engine write. Rather than storing full message snapshots at every step, each step stores its `changes`, which you can replay to reconstruct the context at any point:
 
 ```typescript
 import { contexts, mapping_contexts } from '@goplasmatic/dataflow-wasm';
 
 const { trace } = await engine.run(payload, { trace: true });
-if (!trace) throw new Error('the run was not traced'); // `trace` is optional on RunResult
+if (!trace) throw new Error('the run was not traced');
 
 const after = contexts(trace);   // Context[]: the context after each step, in order
-after[0];                        // after the first step
-trace.initial;                   // before it
-after.at(-1);                    // the message's context after the run, unless `trace.truncated`
+after[0];                        // context after step 0
+trace.initial;                   // context before step 0
+after.at(-1);                    // final context (matches message.context unless trace.truncated)
 
 for (const [i, step] of trace.steps.entries()) {
-  // result: "executed" | "skipped" | "failed"; task_id is null for a workflow's own step
+  // result: "executed" | "skipped" | "failed"; task_id is null for workflow-level steps
   console.log(step.workflow_id, step.task_id, step.result, step.status, step.errors ?? []);
   if (step.mapping_ends) {
-    // A `map` step: the context after each of its mappings, in order.
+    // For a `map` step, reconstruct the context after each individual mapping:
     const perMapping = mapping_contexts(trace, i);
   }
 }
 ```
 
-A step is `{ workflow, workflow_id, task, task_id, result, status, changes, mapping_ends?, errors?, elapsed_us?, loop_counter?, element_index? }`. `errors` holds every record the step added to the message; `loop_counter` tells a loop's sweeps apart; `element_index` a fan-out's elements. A trace can be stored and replayed later: `contexts` and `mapping_contexts` read it back and check it before indexing, and refuse a malformed one with `code: "INVALID_TRACE"`.
+Each `TraceStep` has the shape `{ workflow, workflow_id, task, task_id, result, status, changes, mapping_ends?, errors?, elapsed_us?, loop_counter?, element_index? }`. `errors` contains any error records added during that step, `loop_counter` identifies the loop iteration, and `element_index` identifies the `for_each` element. Traces can be serialized, stored, and replayed later; `contexts` and `mapping_contexts` validate the trace structure and throw `code: "INVALID_TRACE"` if it is malformed.
 
-For long traces, use `TraceReplay` to read only the context being viewed:
+For long traces or interactive UIs, use `TraceReplay` to reconstruct only the specific step you are viewing:
 
 ```typescript
 import { TraceReplay } from '@goplasmatic/dataflow-wasm';
 
-const replay = new TraceReplay(trace); // reads and validates once
+const replay = new TraceReplay(trace); // parses and validates the trace once
 try {
   replay.context_at(-1);              // initial context
-  replay.context_at(0);               // after step 0
-  replay.mapping_context_at(0, 0);    // after its first mapping, or null
+  replay.context_at(0);               // context after step 0
+  replay.mapping_context_at(0, 0);    // context after step 0's first mapping (or null)
 } finally {
   replay.free();
 }
 ```
 
-The cursor keeps one working context. Forward seeks apply intervening
-changes; backward seeks restart from `initial`. It returns a new JS object
-for each requested context, so editing that object cannot alter the replay.
-The debugger uses this API instead of retaining every step's snapshot.
+`TraceReplay` maintains a single working context in WASM memory: seeking forward applies only the intervening diffs, while seeking backward replays from `initial`. Each call returns a fresh JavaScript object so mutating the returned value never corrupts the replay state.
 
 ### `engine.check(definition)`
 
-The issues one definition has, parsed and checked against this engine's functions, each at its authored path. An empty array means it would load:
+Validates a single workflow definition against this engine's registered functions and secrets, returning all issues (including advisories) at their authored JSON paths. An empty array means the definition is valid:
 
 ```typescript
 const issues = engine.check({ id: 'draft', tasks: [{ id: 't', function: { name: 'nope', input: {} } }] });
@@ -228,69 +229,71 @@ const issues = engine.check({ id: 'draft', tasks: [{ id: 't', function: { name: 
 
 ### `engine.workflow_count()`, `engine.workflow_ids()`, `engine.free()`
 
-`workflow_count()` returns the number of loaded workflows, `workflow_ids()` returns their IDs in program order as a `string[]`, and `free()` releases the engine's WebAssembly memory.
+- `workflow_count()`: Returns the number of loaded workflows.
+- `workflow_ids()`: Returns the loaded workflow IDs in priority execution order as a `string[]`.
+- `free()`: Releases the engine's WebAssembly memory.
 
-### Module functions
+### Module Functions
 
 ```typescript
 import init, { engine_version, engine_facts, parse, contexts, mapping_contexts, TraceReplay } from '@goplasmatic/dataflow-wasm';
 
-await init();              // the default export: instantiate the module, once
+await init();              // default export: initialize the WASM module once
 
-engine_version();          // "4.0.0": the engine compiled into this module
+engine_version();          // "4.0.0": version of the compiled Rust engine
 engine_facts();            // { version, builtin_functions, max_group_depth,
                            //   loop_defaults: { init, increment },
                            //   for_each_defaults: { max_concurrency },
                            //   definition_keys: { workflow, task, group, loop, for_each, rollout, function } }
 
-parse(definition);         // { definition, issues }: the definition in the 4.0 spelling,
-                           // null when it was rejected, and every issue at its authored path
+parse(definition);         // { definition, issues }: normalized 4.0 definition (or null if rejected)
+                           // along with all issues at their authored paths
 ```
 
-`parse` reads a definition as the engine does. A 3.x spelling is rewritten (`continue_on_error: true` becomes `on_failure: "continue"`, `validate` becomes `validation`) and reported as a `V3_SPELLING` advisory at the 3.x key; a key the engine does not know is moved into the node's `ext` and reported. `engine_facts()` gives a tool the engine's built-in names, defaults and known definition keys so it need not keep a copy.
-
-Pair `engine_version()` with the version your frontend was built against. An older engine reads a key it predates as an unknown key, kept in `ext` and reported, so a workflow using a newer feature loads and does something other than what it says.
+- `parse(definition)` parses and normalizes a workflow definition. Legacy 3.x keys (such as `continue_on_error: true` or `validate`) are automatically rewritten to their 4.0 equivalents (`on_failure: "continue"`, `validation`) and reported as `V3_SPELLING` advisories. Unrecognized keys are moved into the node's `ext` map and reported.
+- `engine_facts()` returns the engine's built-in function names, limits, defaults, and recognized schema keys so editor and UI tools do not need to hardcode them.
+- `engine_version()` returns the semantic version of the loaded WASM module so frontend packages can verify compatibility.
 
 ### Types
 
-The package's `dataflow_wasm.d.ts` declares the engine's wire types, generated from the crate (`Message`, `Context`, `Change`, `AuditEntry`, `ErrorRecord`, `Trace`, `TraceStep`, `StepResult`, `Run`, `RunStatus`, `WorkflowRecord`, `Selection`, `WorkflowExit`, `DataflowError`, `Issue`, `Severity`, `JsonValue`), and the package's own (`WasmEngine`, `TraceReplay`, `EngineOptions`, `RunOptions`, `TraceOptions`, `AuditMode`, `RunResult`, `EngineError`, `EngineFacts`, `ParseResult`). Every export is typed with them, so the result of `run` needs no cast.
+`dataflow_wasm.d.ts` exports all wire types generated from the Rust crate (`Message`, `Context`, `Change`, `AuditEntry`, `ErrorRecord`, `Trace`, `TraceStep`, `StepResult`, `Run`, `RunStatus`, `WorkflowRecord`, `Selection`, `WorkflowExit`, `DataflowError`, `Issue`, `Severity`, `JsonValue`) alongside the WASM wrapper types (`WasmEngine`, `TraceReplay`, `EngineOptions`, `RunOptions`, `TraceOptions`, `AuditMode`, `RunResult`, `EngineError`, `EngineFacts`, `ParseResult`).
 
-## From 3.x
+## Migrating from 3.x
 
 | 3.x | 4.0 |
 |---|---|
-| `new WasmEngine(workflowsJson)` | Unchanged; an array of definitions is accepted too |
+| `new WasmEngine(workflowsJson)` | Unchanged (now also accepts an array of workflow objects) |
 | `WasmEngine.with_secrets(workflowsJson, secretsJson)` | `new WasmEngine(workflows, { secrets })` |
-| `engine.process(payload)`, a JSON string | `engine.run(payload)`, resolving with `{ message, run }` as objects |
-| `engine.process_with_trace(payload)` | `engine.run(payload, { trace: true })`; the trace is `result.trace` |
-| `process_message(workflowsJson, payload)` | Build an engine and call `run` |
-| `engine.workflow_ids()`, a JSON string | A `string[]` |
-| The payload forced to a string | Any value; a string stays a string |
-| A failing run rejected the promise with a string | Resolves; read `run.status` and `run.error` |
-| A refused definition threw a string | Throws an `EngineError` with `code` and `issues` |
-| A trace step's `message` snapshot and `mapping_contexts` | `contexts(trace)` and `mapping_contexts(trace, step)` |
-| A trace step's `duration_us` | `elapsed_us`, with `trace: { timings: true }` |
-| `message.errors` as the one error channel | Still on the message; `run.status` and `run.error` say whether the run stopped |
+| `engine.process(payload)` returning a JSON string | `engine.run(payload)` resolving with `{ message, run }` objects |
+| `engine.process_with_trace(payload)` | `engine.run(payload, { trace: true })` (`result.trace`) |
+| `process_message(workflowsJson, payload)` | Construct a `WasmEngine` and call `engine.run(payload)` |
+| `engine.workflow_ids()` returning a JSON string | Returns `string[]` |
+| Payload coerced to a string | Accepts any JSON value; strings remain strings |
+| Failed runs rejected the promise with a string | Promise resolves; check `run.status` and `run.error` |
+| Invalid definitions threw a string | Throws an `EngineError` with `code` and `issues` |
+| Per-step `message` snapshots in traces | Reconstruct via `contexts(trace)` and `mapping_contexts(trace, step)` |
+| Trace step `duration_us` | `elapsed_us` when run with `trace: { timings: true }` |
+| `message.errors` as the only error channel | `message.errors` holds all error records; `run.status` indicates if the run stopped |
 
-Definitions written for 3.x load as they are: `continue_on_error`, `halt_on` and `validate` are rewritten to `on_failure`, `on_rejection` and `validation` and reported as `V3_SPELLING` advisories. `parse(definition)` shows the rewritten form.
+Existing 3.x workflow JSON loads automatically: `continue_on_error`, `halt_on`, and `validate` are rewritten to `on_failure`, `on_rejection`, and `validation` with `V3_SPELLING` advisories. Call `parse(definition)` to obtain the migrated 4.0 JSON.
 
 ## Building from Source
 
 Requirements:
 - Rust 1.98+
-- wasm-pack
+- `wasm-pack`
 
 ```bash
 cd wasm
-wasm-pack test --node                          # the package's tests, on wasm32 under Node
-wasm-pack build --target web --out-dir pkg     # the package, in wasm/pkg/
-node scripts/verify-wasm.mjs pkg               # the binary's features and the .d.ts's types
+wasm-pack test --node                          # run tests on wasm32 under Node.js
+wasm-pack build --target web --out-dir pkg     # build the package into wasm/pkg/
+node scripts/verify-wasm.mjs pkg               # verify exports and TypeScript definitions
 ```
 
 ## Related Packages
 
-- [dataflow-rs](https://crates.io/crates/dataflow-rs) - Core Rust workflow engine
-- [@goplasmatic/dataflow-ui](https://www.npmjs.com/package/@goplasmatic/dataflow-ui) - React visualization library
+- [dataflow-rs](https://crates.io/crates/dataflow-rs) — Core Rust workflow engine
+- [@goplasmatic/dataflow-ui](https://www.npmjs.com/package/@goplasmatic/dataflow-ui) — React visualization and debugging components
 
 ## License
 

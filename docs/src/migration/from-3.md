@@ -1,67 +1,69 @@
 # Migrating from 3.x
 
-dataflow-rs 4 keeps every stored definition and every stored message
-loading, and changes the Rust API. This page is for two readers. A workflow
-author reads [What still loads](#what-still-loads) and
-[What changes for an author](#what-changes-for-an-author). A Rust host
-reads those and then [What changes for a host](#what-changes-for-a-host),
-which walks the API change step by step. Both end at the
-[checklist](#before-switching).
+Dataflow-rs 4.0 maintains backward compatibility for stored 3.x workflow
+definitions and serialized messages while introducing a cleaner, compile-time
+validated Rust API.
 
-## What still loads
+- **Workflow authors:** Read [Backward Compatibility for 3.x Workflows](#backward-compatibility-for-3x-workflows)
+  and [Behavioral Changes for Workflow Authors](#behavioral-changes-for-workflow-authors).
+- **Rust application developers:** Read those sections first, then follow
+  [Rust API Migration Guide](#rust-api-migration-guide) and the
+  [Pre-Migration Checklist](#pre-migration-checklist).
 
-Every 3.x definition loads through the compat reader, which `def::parse`
-runs first when `ParseOptions::compat` is on, and it is on by default. The
-reader rewrites each 3.x spelling into its 4.0 counterpart and reports the
-rewrite as a `V3_SPELLING` Advisory at the key the author typed. Nothing
-else happens to a definition: the engine runs the rewritten form, and the
-spelling in the store is the author's business.
+## Backward Compatibility for 3.x Workflows
 
-### Spellings
+By default, `def::parse` enables the 3.x compatibility reader
+(`ParseOptions::compat(true)`). It automatically translates 3.x workflow
+spellings into their 4.0 equivalents in memory and reports each translation as a
+`V3_SPELLING` advisory at the authored JSON path. Your existing 3.x workflow
+definitions load and run without requiring immediate database migrations.
 
-| 3.x | 4.0 | Reported as |
+### Automatic Rewrites
+
+| 3.x Spelling | 4.0 Equivalent | Issue Reported |
 |---|---|---|
-| `continue_on_error: true` / `false` on a workflow | `on_failure: continue` / `fail` | `V3_SPELLING` Advisory |
-| `continue_on_error` and `halt_on` on a task | `on_failure` and `on_rejection`, by the table below | `V3_SPELLING` Advisory |
-| `validate` as a function name | `validation` | `V3_SPELLING` Advisory |
-| An unknown key on a workflow, task or group, such as the UI's `path` | Moved into that node's `ext`, so `path` becomes `ext.path` | `UNKNOWN_KEY` Advisory |
-| An unknown key within edit distance of a known key, such as `conditon` | Moved into `ext` | `LIKELY_TYPO` Defect |
-| An unknown key inside `loop`, `for_each` or `rollout` | The owning node's `ext`, as `loop.<key>` | `UNKNOWN_KEY` or `LIKELY_TYPO` |
-| An unknown key inside a built-in's input, or inside a `map` mapping or a `validation` rule | The task's `ext`, named by its path, such as `function.input.mappings[0].note` | `UNKNOWN_KEY` or `LIKELY_TYPO` |
-| `continue_on_error` on a group | The group's `ext` | `GROUP_CONTINUE_ON_ERROR` Advisory |
-| A timestamp spelled `2024-01-01 00:00:00 UTC` | Read as in 3.x; written as RFC 3339 | Nothing |
+| `continue_on_error: true` / `false` on a workflow | `on_failure: "continue"` / `"fail"` | `V3_SPELLING` (`Advisory`) |
+| `continue_on_error` and `halt_on` on a task | `on_failure` and `on_rejection` (see table below) | `V3_SPELLING` (`Advisory`) |
+| `"name": "validate"` on a task | `"name": "validation"` | `V3_SPELLING` (`Advisory`) |
+| Unknown key on a workflow, task, or group (e.g., UI `"path"`) | Moved into that node's `ext` object (`ext.path`) | `UNKNOWN_KEY` (`Advisory`) |
+| Unknown key close to a valid key name (e.g., `"conditon"`) | Moved into `ext` | `LIKELY_TYPO` (`Defect`) |
+| Unknown key inside `loop`, `for_each`, or `rollout` | Moved into the owning node's `ext` as `loop.<key>`, etc. | `UNKNOWN_KEY` or `LIKELY_TYPO` |
+| Unknown key inside a built-in's `input`, `map` mapping, or `validation` rule | Moved into the task's `ext` under its relative path (e.g., `function.input.mappings[0].note`) | `UNKNOWN_KEY` or `LIKELY_TYPO` |
+| `continue_on_error` on a task group | Moved into the group's `ext` | `GROUP_CONTINUE_ON_ERROR` (`Advisory`) |
+| Timestamp formatted as `2024-01-01 00:00:00 UTC` | Parsed cleanly and serialized as RFC 3339 | None |
 
-A key counts as a near miss at an edit distance of 1 for keys up to five
-characters and 2 for longer keys. The parser reports it as a Defect so typos do
-not go unnoticed.
+An unknown key is flagged as a `LIKELY_TYPO` (`Severity::Defect`) when it is
+within an edit distance of 1 (for keys up to 5 characters) or 2 (for longer
+keys) of a known key at that level.
 
-### Policy Mapping
+### Task Policy Mapping
 
-3.x used two task flags (`continue_on_error` and `halt_on`); 4.0 uses two
-policies (`on_failure` for a 5xx or `Err`, and `on_rejection` for a 4xx):
+In 3.x, tasks used two flags (`continue_on_error` and `halt_on`). In 4.0, tasks
+use two explicit policies (`on_failure` for `5xx` statuses and `Err`, and
+`on_rejection` for `4xx` statuses):
 
-| 3.x task flags | 4.0 task policies | Behaviour |
+| 3.x Task Flags | 4.0 Task Policies | Behavior |
 |---|---|---|
-| Neither | `on_failure: fail`, `on_rejection: continue` | A 5xx or `Err` goes to the workflow's policy; a 4xx is recorded and the next task runs |
-| `continue_on_error: true` | `on_failure: continue`, `on_rejection: continue` | Everything is recorded and the next task runs |
-| `halt_on: "failure"` | `on_failure: fail`, `on_rejection: halt` | A 4xx halts this workflow; a 5xx or `Err` goes to the workflow's policy |
-| Both | `on_failure: halt`, `on_rejection: halt` | A 4xx, 5xx or `Err` halts this workflow, and the run goes on |
-| `terminal: true` | `terminal: true` | Unchanged: applied after the policy, so a failure still propagates |
-| Workflow `continue_on_error: false` / `true` | Workflow `on_failure: fail` / `continue` | `continue` ends this workflow (in a loop, this sweep) and the next one runs |
+| Neither | `on_failure: "fail"`, `on_rejection: "continue"` | `5xx` or `Err` propagates to the workflow's `on_failure` policy; `4xx` is recorded and execution continues to the next task. |
+| `continue_on_error: true` | `on_failure: "continue"`, `on_rejection: "continue"` | Both rejections and failures are recorded, and execution continues to the next task. |
+| `halt_on: "failure"` | `on_failure: "fail"`, `on_rejection: "halt"` | `4xx` halts the current workflow; `5xx` or `Err` propagates to the workflow's `on_failure` policy. |
+| Both `continue_on_error: true` and `halt_on: "failure"` | `on_failure: "halt"`, `on_rejection: "halt"` | Any `4xx`, `5xx`, or `Err` halts the current workflow while allowing subsequent workflows to run. |
+| `terminal: true` | `terminal: true` | Unchanged (applied after outcome policies, so failures under `on_failure: "fail"` still propagate). |
+| Workflow `continue_on_error: false` / `true` | Workflow `on_failure: "fail"` / `"continue"` | `"continue"` ends the current workflow (or advances to the next loop iteration) and moves on to the next workflow. |
 
-`halt_on: "never"` and `continue_on_error: false` match the default policies
-and are removed during migration while still reporting `V3_SPELLING`.
+Default 3.x values (`halt_on: "never"` and `continue_on_error: false`) map to
+the 4.0 defaults and are omitted when rewritten by `migrate_v3`, while still
+reporting `V3_SPELLING`.
 
-**Do not mix 3.x and 4.0 policy keys on the same node.** A task or workflow
-containing both a 3.x key (`continue_on_error`, `halt_on`) and a 4.0 key
-(`on_failure`, `on_rejection`) fails with `MIXED_SPELLING` at the 3.x key.
+**Do not mix 3.x and 4.0 policy keys on the same node.** Combining a 3.x flag
+(`continue_on_error` or `halt_on`) with a 4.0 policy (`on_failure` or
+`on_rejection`) on the same workflow or task is rejected with `MIXED_SPELLING`.
 
-### Storing the 4.0 spelling
+### Upgrading Stored Definitions to 4.0 JSON (`compat::migrate_v3`)
 
-`compat::migrate_v3` parses with the reader on and writes the definition in
-the 4.0 spelling, which parses with the reader off to an equal definition.
-Its `rewrites` say what changed, in the document's order, and its `issues`
-carry everything the definition has, none Rejected:
+Use `compat::migrate_v3` to permanently convert stored 3.x workflow JSON into
+canonical 4.0 JSON (which parses cleanly with `.compat(false)`). It returns the
+rewritten JSON, an ordered list of `rewrites`, and any non-rejected `issues`:
 
 ```rust
 use dataflow_rs::compat::migrate_v3;
@@ -94,7 +96,7 @@ assert_eq!(migrated.json, json!({
 let rewrites: Vec<(String, String)> = migrated.rewrites.iter()
     .map(|r| (r.path.to_string(), r.to_string()))
     .collect();
-// In the document's key order, as written.
+// Reported in document key order:
 assert_eq!(rewrites, [
     (
         "continue_on_error".to_string(),
@@ -115,98 +117,91 @@ assert_eq!(codes, [
     IssueCode::V3Spelling, IssueCode::V3Spelling, IssueCode::V3Spelling, IssueCode::UnknownKey,
 ]);
 assert_eq!(migrated.issues[3].path.to_string(), "tasks[0].path");
-# // The output parses with the reader off to the definition the reader read.
+# // Verify that the migrated JSON parses with `.compat(false)` to the same definition:
 # use dataflow_rs::def::{ParseOptions, parse};
 # let off = parse(&migrated.json, ParseOptions::default().compat(false));
 # assert_eq!(off.def, parse(&stored, ParseOptions::default()).def);
 # assert!(off.issues.is_empty());
 ```
 
-A definition that mixes spellings, or breaks any structural rule, comes
-back as `Err` with every issue.
+## Behavioral Changes for Workflow Authors
 
-## What changes for an author
+Core execution semantics remain unchanged: a failed `validation` task still
+returns status `400` and only halts the workflow when `on_rejection: "halt"` is
+set, `null` results in `map` are skipped by default, `terminal` and halt
+policies apply after status classification, loops and `for_each` behave the same
+way, group conditions evaluate once on entry, and `metadata.progress` is written
+after every task.
 
-These are the behaviours a definition can observe. Nothing else about a
-workflow's semantics moved: a failing `validation` still returns 400 and
-gates only when `on_rejection` says so, a `null` map result is still
-skipped, `terminal` and the halt policies still apply after the status is
-classified, loops and `for_each` are unchanged, a group's condition is still
-evaluated once, and `metadata.progress` is still written after every task.
+The following edge cases and validations have been tightened in 4.0:
 
-- **A `map` path outside the three roots is refused.** A literal `path` that
-  does not start at `data`, `metadata` or `temp_data` is `INVALID_PATH`,
-  Rejected, at compile. 3.x wrote it as a new top-level context key. A
-  computed path that names no root fails the mapping at run time, so the
-  task returns 500.
-- **A literal `payload` path is a Defect.** `{"var": "payload.x"}` is
-  `PAYLOAD_VAR`: the evaluation context is `{data, metadata, temp_data}`,
-  so the read always resolved to nothing in 3.x too. Parse the payload into
-  `data` first.
-- **No `WORKFLOW_ERROR` records.** The task's record carries the workflow
-  id. A workflow's own failure, such as a `loop.over` that is not an array,
-  records one `LOGIC_ERROR` with the workflow id and no task id.
-- **`name` is optional** on every workflow, task and group.
-- **Only `active` workflows run,** with or without a channel. A `paused` or
-  `archived` workflow is not considered, and appears in no run report.
-- **An unregistered function rejects its workflow at load,** as an
-  `UNKNOWN_FUNCTION` issue at `tasks[i].function.name`. 3.x refused the
-  build too, with one `FUNCTION_NOT_FOUND` error naming the function; 4.0
-  reports every such task and rejects only the workflows that name one.
-- **The three integration configs left the engine.** `http_call`, `enrich`
-  and `publish_kafka` are a host's functions now, registered like any other,
-  and their 3.x spellings (`path_logic`, `body_logic`, `key_logic`,
-  `value_logic`) are not rewritten: they reach the host's config as written,
-  so a host that still stores them rewrites them in its own loader. A
-  definition that names one in a host that has not registered it is
-  `UNKNOWN_FUNCTION`.
-- **Every unknown key is reported,** as the table above says. Inside a host
-  function's `input` the key is Rejected, near miss or not: a derived config
-  refuses what it does not declare.
-- **An array index stops at 1,048,575.** A bare numeric segment larger than
-  that is an object key, so no path can grow an array without bound; 3.x
-  padded an array to any index.
-- **A write at a root takes only an object,** a host function's or a
-  `map`'s. `data`, `metadata` and `temp_data` cannot be replaced with an
-  array, a string or a number: a host function's write is a `CONFIG_ERROR`,
-  and a `map` whose `logic` is always a non-object at a literal root is
-  `INVALID_MAPPING` at build, any other non-object result failing the mapping
-  with status 500. 3.x's `map` replaced the root.
+- **`map` paths must start with `data`, `metadata`, or `temp_data`:** A literal
+  `path` outside the three context roots is rejected at compile time with
+  `INVALID_PATH` (3.x created a fourth top-level key on the context). A dynamic
+  path that resolves outside the three roots fails the mapping at runtime with
+  status `500`.
+- **Literal `payload` reads in `var` are flagged as a `Defect`:** Writing
+  `{"var": "payload.x"}` is reported as `PAYLOAD_VAR` because `payload` is not
+  in the evaluation context (it always resolved to `null` in 3.x as well). Parse
+  `payload` into `data` first using `parse_json` or `parse_xml`.
+- **No wrapper `WORKFLOW_ERROR` records:** Each task's `ErrorRecord` already
+  carries `workflow_id` and `task_id`. Workflow-level errors (such as a
+  `loop.over` expression that does not evaluate to an array) record a single
+  `LOGIC_ERROR` with `workflow_id` set and `task_id: None`.
+- **`name` is optional** on workflows, tasks, and groups.
+- **Only `active` workflows execute:** Workflows with `status: "paused"` or
+  `"archived"` are skipped regardless of whether a channel is specified, and do
+  not appear in `Run::workflows()`.
+- **Unregistered functions are reported per task:** Calling an unknown function
+  reports `UNKNOWN_FUNCTION` at `tasks[i].function.name` and rejects only the
+  affected workflow rather than failing the entire registry build on the first
+  missing function.
+- **Integration config types (`http_call`, `enrich`, `publish_kafka`) were
+  removed from the core crate:** These are host functions that your application
+  registers like any other `Function`. If your stored workflows still use 3.x
+  field names (`path_logic`, `body_logic`, `key_logic`, `value_logic`), rename
+  them in your loader or support them on your `FunctionConfig` struct with
+  `#[config(rename = ...)]`.
+- **Unknown keys in host function inputs are strictly rejected:** While unknown
+  keys on workflow/task/group nodes are moved into `ext` when `compat` is on,
+  unknown keys inside a custom host function's `input` are always rejected with
+  `LIKELY_TYPO` or `UNKNOWN_KEY`.
+- **Array index paths are capped at `1,048,575` (`MAX_ARRAY_INDEX`):** Numeric
+  path segments above `1,048,575` are treated as object keys rather than growing
+  an array without bound.
+- **Context roots must always be objects:** Neither `map` nor a custom host
+  function can replace `data`, `metadata`, or `temp_data` with a scalar or
+  array.
 
-## What changes for a host
+## Rust API Migration Guide
 
-Every Rust host takes a major version. The table maps the 3.x surface onto
-4.0; the numbered steps after it show each change as code.
+### Type and Method Mapping
 
-### The surface, name by name
-
-| 3.x | 4.0 |
+| 3.x API | 4.0 Equivalent |
 |---|---|
-| `Workflow`, `Task`, `TaskGroup`, `LoopConfig`, `ForEach`, with hidden compiled fields | `def::WorkflowDef`, `TaskDef`, `GroupDef`, `LoopDef`, `ForEachDef`: read-only data, entered through `def::parse` and read through accessors (`def.id()`, `task.on_failure()`) |
-| `Workflow::validate_authored`, `check_workflow` | `def::parse` and `Compiler::check`, same issue vocabulary |
+| `Workflow`, `Task`, `TaskGroup`, `LoopConfig`, `ForEach` | `def::WorkflowDef`, `TaskDef`, `GroupDef`, `LoopDef`, `ForEachDef` (parsed via `def::parse`, accessed via methods like `def.id()`, `task.on_failure()`) |
+| `Workflow::validate_authored`, `check_workflow` | `def::parse` + `Compiler::check` |
 | `walk_authored_steps`, `is_group`, `MAX_GROUP_DEPTH` | `WorkflowDef::walk`, `StepDef::Group`, `def::MAX_GROUP_DEPTH` |
-| `Engine::new`, `new_with_operators`, `builder`, `with_new_workflows` | `Registry` + `Compiler` + `Engine::new`, or `Engine::builder`; a reload is `compiler()`, `link`, `with_program` |
-| `process_message` and its channel and trace twins | `Engine::run`, `Engine::run_with` |
-| `AsyncFunctionHandler`, `type Input`, `execute` | `Function`, a derived `type Config`, `call` |
-| `TaskContext` | `Ctx`; handler tests use `function::testing` |
+| `Engine::new`, `new_with_operators`, `builder`, `with_new_workflows` | `Registry` + `Compiler` + `Engine::new` (or `Engine::builder()`); reload via `engine.compiler()`, `link`, and `engine.with_program()` |
+| `process_message`, `process_message_in_channel`, `process_message_tracing` | `Engine::run(&mut msg)` and `Engine::run_with(&mut msg, &opts)` |
+| `AsyncFunctionHandler`, `type Input`, `execute` | `Function`, `#[derive(FunctionConfig)] type Config`, `async fn call` |
+| `TaskContext` | `Ctx` (unit-tested with `function::testing::call`) |
 | `Template`, `PathTemplate`, `TemplateCompiler` | `Expr<T>`, `Output`, `Interpolated` |
-| `FunctionConfig` enum, `HttpCallConfig`, `EnrichConfig`, `PublishKafkaConfig` | Registry entries; the integration configs are the host's |
-| `DataflowError`, `ErrorInfo`, `ServiceErrorBuilder` | `Error` and `ErrorKind`; `ErrorRecord` on the wire |
-| `ExecutionObserver` with five methods | `Observer`: `interest` plus one `on` |
-| `ExecutionTrace` with snapshots | `Trace`: the initial context plus changes |
-| `process_message_tracing`, `TraceOptions` | `RunOptions::trace(TraceOptions)`, then `Run::trace` or `take_trace` |
+| `FunctionConfig` enum (`HttpCallConfig`, `EnrichConfig`, `PublishKafkaConfig`) | Custom `Function` implementations registered on `Registry` |
+| `DataflowError`, `ErrorInfo`, `ServiceErrorBuilder` | `Error` and `ErrorKind`; `ErrorRecord` on `Message::errors()` |
+| `ExecutionObserver` (5 trait methods) | `Observer` (`interest()` + `on(&Event)`) |
+| `ExecutionTrace` (full message snapshots per step) | `Trace` (`initial` context + incremental `changes`; replay via `trace.contexts()`) |
 | `with_error_context_path`, `with_error_context_limit` | `EngineConfig::error_context(ErrorContext::new(path, limit)?)` |
-| `MessageBuilder`: `capture_changes`, `audit_mode`, `routing_bucket` | `RunOptions` fields; `MessageBuilder` is gone |
-| `get_nested_value`, `set_nested_value`, `remove_nested_value` | `Path::get`, `Path::set`, `Path::remove`, and `Context::get`, `set`, `remove` |
-| `declared_secrets`, `operator_names`, `template_key_escape`, `datalogic` | `ExprEngine::secrets().names()`, `operators()`, `escape()`, the `ExprEngine` itself |
-| `Rollout::partition`, `validate_set` | Unchanged, in `def` |
-| `RetryPolicy`, `retry_with_policy`, `retry_with_attempts` | Removed; retry is the host's policy |
-| `Rule`, `Action`, `RulesEngine`; `continue_on_error`, `halt_on` | The aliases are gone; the compat reader rewrites the spellings |
+| `MessageBuilder` (`capture_changes`, `audit_mode`, `routing_bucket`) | Configured per run on `RunOptions` |
+| `get_nested_value`, `set_nested_value`, `remove_nested_value` | `Path::get`, `Path::set`, `Path::remove` and `Context::get`, `set`, `remove` |
+| `declared_secrets`, `operator_names`, `template_key_escape`, `datalogic` | `ExprEngine::secrets().names()`, `operators()`, `escape()`, `ExprEngine` |
+| `Rollout::partition`, `validate_set` | Unchanged, in `dataflow_rs::def` |
+| `RetryPolicy`, `retry_with_policy`, `retry_with_attempts` | Removed (check `Run::retryable()` or `Error::is_retryable()` in your application's retry loop) |
+| `Rule`, `Action`, `RulesEngine` type aliases | Removed |
 
-### 1. Build
+### 1. Building and Reloading the Engine
 
-3.x parsed each definition into a `Workflow` and built one engine over all
-of them:
+In 3.x, you parsed each `Workflow` separately and passed it to `Engine::builder()`:
 
 ```text
 // 3.x
@@ -217,8 +212,8 @@ let engine = Engine::builder()
     .build()?;
 ```
 
-4.0 has two shapes. A host that does not quarantine uses the builder, whose
-`build` fails with every rejected definition's issues:
+In 4.0, if you want the build to fail when any workflow is invalid, pass JSON
+directly to `Engine::builder()`:
 
 ```rust
 use dataflow_rs::Engine;
@@ -239,9 +234,8 @@ let engine = Engine::builder()
 # Ok::<(), usize>(())
 ```
 
-A host that stores definitions and runs the ones that compile owns the
-quarantine: one `Compiler`, one `compile_one` per workflow, then `link` and
-`Engine::new`:
+If you load workflows from a database and want to quarantine invalid workflows
+while running the valid ones, use `def::parse` and `Compiler`:
 
 ```rust
 use dataflow_rs::def::{ParseOptions, parse};
@@ -266,15 +260,15 @@ for json in &stored {
 let engine = Engine::new(compiler.link(workflows), EngineConfig::default());
 # assert_eq!(engine.program().workflows().len(), 1);
 
-// A reload keeps the registry and the config.
+// Hot-reload workflows while preserving the registry and engine configuration:
 let reloaded = engine.with_program(engine.compiler().link([]));
 # assert_eq!(reloaded.program().workflows().len(), 0);
 ```
 
-### 2. Handlers
+### 2. Custom Host Functions
 
-3.x handlers implemented `AsyncFunctionHandler` with a serde `Input` and
-wrote through a `TaskContext`:
+In 3.x, custom functions implemented `AsyncFunctionHandler` with `#[async_trait]`,
+a `serde::Deserialize` input struct, and `TaskContext`:
 
 ```text
 // 3.x
@@ -293,12 +287,8 @@ impl AsyncFunctionHandler for Fetch {
 }
 ```
 
-4.0 handlers implement `Function`. The config is derived: each field's type
-says what it is (`Expr<T>` an expression, `Output` a write destination,
-`Interpolated` a document, a plain type a literal, and `#[config(serde)]`
-a type serde already reads), unknown keys are refused, and every issue is
-reported at its own path when the workflow compiles, not on the first
-message:
+In 4.0, custom functions implement `Function` with a `#[derive(FunctionConfig)]`
+struct:
 
 ```rust
 use dataflow_rs::expr::Output;
@@ -332,30 +322,28 @@ impl Function for Fetch {
 # let _ = Fetch;
 ```
 
-`TaskContext` becomes `Ctx`, and the methods map one to one:
+`TaskContext` methods map to `Ctx` as follows:
 
 | 3.x `TaskContext` | 4.0 `Ctx` |
 |---|---|
-| `ctx.get("data.x")` | `ctx.get(&path)`, a `Path` parsed once |
-| `ctx.set("data.x", value)` | `ctx.set(&path, value)?`; at a root it takes only an object |
-| `ctx.eval(&logic)` | `ctx.eval(&expr)`, typed by the `Expr<T>` |
-| `input.target`, a path string | `ctx.emit(&cfg.output, value)?` through an `Output` |
+| `ctx.get("data.x")` | `ctx.get(&path)` (where `path` is a pre-parsed `Path`) |
+| `ctx.set("data.x", value)` | `ctx.set(&path, value)?` |
+| `ctx.eval(&logic)` | `ctx.eval(&expr)` (typed by `Expr<T>`) |
+| Writing to `input.target` | `ctx.emit(&cfg.output, value)?` via an `Output` field |
 | `ctx.add_error(info)` | `ctx.record_error(record)` |
 | `ctx.workflow_id()`, `task_id()`, `loop_counter()`, `element_index()` | `ctx.info().workflow_id`, `task_id`, `loop_counter`, `element_index` |
-| `ctx.secret(name)` | `ctx.secret(name)`, unchanged |
-| `ctx.message_mut()` | Gone: `set`, `remove` and `emit` are the only writes |
-| `TaskOutcome::Success` | `Outcome::Ok`; `Status`, `Skip` and `Halt` are unchanged |
+| `ctx.secret(name)` | `ctx.secret(name)` (unchanged) |
+| `ctx.message_mut()` | Removed (perform all context writes through `set`, `remove`, and `emit`) |
+| `TaskOutcome::Success` | `Outcome::Ok` (`Status`, `Skip`, and `Halt` keep the same names) |
 
-A call's writes go to an overlay of their own: the call reads them at
-once, and they reach the message only when it returns `Ok`, whatever the
-`Outcome`. An `Err` drops them. Test a function with
-`function::testing::call`, which runs one call through the real compile,
-overlay and layers, instead of building a one-workflow engine.
+Remember that context writes in `Ctx` are buffered in an overlay and committed
+only when `call` returns `Ok`; if `call` returns `Err`, all context writes from
+that call are discarded. Use `function::testing::call` to unit-test functions
+directly without building a full `Engine`.
 
-### 3. Calls
+### 3. Running Messages and Checking Results
 
-3.x returned `Err` when the engine stopped early, and left the rest on the
-message:
+In 3.x, `process_message` returned `Result<(), DataflowError>`:
 
 ```text
 // 3.x
@@ -365,11 +353,8 @@ match engine.process_message(&mut message).await {
 }
 ```
 
-4.0 returns a `Run` on every outcome and the status is read from it.
-`message.errors()` remains the only error list, with two additions: a failed
-`map` mapping records `MAPPING_ERROR` (its destination as the `path`) before
-the task's `TASK_STATUS_ERROR`, and a `filter` condition that fails to
-evaluate records `EVALUATION_ERROR` where 3.x recorded nothing:
+In 4.0, `engine.run` and `engine.run_with` always return a `Run` report, and
+you inspect `run.status()` (or call `run.into_result()`):
 
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -397,34 +382,13 @@ match run.status() {
 # });
 ```
 
-`Run::into_result()` gives the 3.x shape back, `Err` on a stop, but drops
-the report and its trace.
+### 4. Observers, Traces, and Error Context
 
-### 4. Observers, traces and the error context
+#### Observers
 
-3.x observers implemented up to five methods and were attached on the
-builder:
-
-```text
-// 3.x
-impl ExecutionObserver for Metrics {
-    fn task_finished(&self, event: &TaskEvent<'_>) { /* event.function, event.status, event.duration */ }
-    fn message_finished(&self, event: &MessageFinished<'_>) { /* event.errors, event.stopped_early */ }
-}
-Engine::builder().with_observer(Arc::new(Metrics::default()))
-```
-
-4.0 observers implement one `on(&Event)` and say what they want with
-`interest()`, read once per run. The default, `WORKFLOWS | TASKS`, reads no
-clock; `TIMINGS` makes every `elapsed` `Some`. The five callbacks map one to
-one: `message_started` to `RunStarted` (its `workflows_considered` is
-`considered`), `task_finished` to `TaskFinished` (its `function` is the
-registered name, `validation` where 3.x said `validate`),
-`workflow_finished` to `WorkflowFinished` (its `halted` is
-`record.exit == Some(WorkflowExit::Halted)`), and `message_finished` to
-`RunFinished` (its `stopped_early` is a `Stopped`, `TimedOut` or
-`Cancelled` status). Each variant is `#[non_exhaustive]`, so match with
-`..`:
+In 3.x, `ExecutionObserver` had five separate callback methods. In 4.0,
+`Observer` has a single `on(&Event)` method and an `interest()` method that
+controls which events and timings are collected:
 
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -474,23 +438,11 @@ assert_eq!(metrics.tasks.load(Ordering::Relaxed), 1);
 # });
 ```
 
-An observer on `EngineConfig::observer` sees every run and survives a
-reload; one on `RunOptions::observer` sees one run.
+#### Execution Traces
 
-3.x traced through a second entry point and a trace it filled:
-
-```text
-// 3.x
-let mut trace = ExecutionTrace::with_options(TraceOptions { snapshots: true, ..Default::default() });
-engine.process_message_tracing(&mut message, &mut trace).await?;
-for step in &trace.steps { /* step.message is a snapshot */ }
-```
-
-4.0 asks for the trace on the options and reads it from the `Run`, on every
-status. `redact_paths` is `redact`, `max_snapshot_bytes` is `max_bytes`, and
-the snapshot knobs are gone, because there are no snapshots: the trace is
-the initial context plus each step's changes, and `Trace::contexts()`
-replays them:
+Instead of calling a separate `process_message_tracing` method that stores full
+message snapshots per step, pass `TraceOptions` on `RunOptions` and retrieve the
+`Trace` from `Run`:
 
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -510,7 +462,7 @@ let mut run = engine.run_with(&mut message, &opts).await;
 
 let trace = run.take_trace().expect("a trace was asked for");
 for (step, context) in trace.steps.iter().zip(trace.contexts()) {
-    // `context` is the whole context after this step.
+    // `context` is the reconstructed message context after this step:
     let _ = (step.result, step.status, &step.changes, &step.errors, &step.mapping_ends, context);
 }
 # assert_eq!(trace.steps.len(), 1);
@@ -522,19 +474,10 @@ for (step, context) in trace.steps.iter().zip(trace.contexts()) {
 # });
 ```
 
-3.x configured the error context on the builder:
+#### Error Context
 
-```text
-// 3.x
-Engine::builder()
-    .with_error_context_path("metadata.errors")
-    .with_error_context_limit(50)
-```
-
-4.0 puts it on the `EngineConfig`, and refuses a path at or below a
-`metadata` slot the engine writes (`progress`, `processed_at`,
-`engine_version`, `channel`). The path is reset at run start, so a message
-never brings records in:
+Configure `ErrorContext` on `EngineConfig` rather than directly on
+`EngineBuilder`:
 
 ```rust
 use dataflow_rs::run::{EngineConfig, ErrorContext};
@@ -547,18 +490,10 @@ let builder = Engine::builder().config(config);
 # Ok::<(), dataflow_rs::Error>(())
 ```
 
-### 5. Errors
+### 5. Constructing and Inspecting Errors
 
-3.x had a `DataflowError` with a variant per cause and a builder for a
-service's own:
-
-```text
-// 3.x
-return Err(DataflowError::service("HTTP_ERROR", "upstream 502").retryable(true).build());
-```
-
-4.0 has `Error` with an `ErrorKind`. A host makes its own with
-`Error::service(code, message)`, and keeps a stored code by naming it:
+Replace `DataflowError::service(...).retryable(true).build()` with
+`Error::service(code, message).with_retryable(true)`:
 
 ```rust
 use dataflow_rs::{Error, ErrorKind};
@@ -569,34 +504,13 @@ assert!(matches!(e.kind(), ErrorKind::Service { .. }));
 assert!(e.is_retryable());
 ```
 
-The recorded codes `LOGIC_ERROR`, `TIMEOUT_ERROR`, `BUDGET_EXCEEDED`,
-`TASK_STATUS_ERROR`, `EVALUATION_ERROR` and `VALIDATION_ERROR` are unchanged,
-and every record a task adds now carries `workflow_id` and `task_id` (3.x
-left them unset on `validation`'s records and on `add_error`); `CANCELLED` and
-`MAPPING_ERROR` are new,
-and `TIMEOUT_ERROR` is now also what the engine's own deadline writes.
-`FUNCTION_NOT_FOUND` and `DESERIALIZATION_ERROR` are gone: an unregistered
-function is the `UNKNOWN_FUNCTION` issue at build, and a value that does not
-convert to a field's type records `LOGIC_ERROR`. See the
-[error codes](../api/reference.md#error-codes).
+See [Error Codes](../api/reference.md#error-codes) for the full list of error
+codes in 4.0.
 
-### 6. Options, paths and retries
+### 6. Run Options and Context Paths
 
-`capture_changes`, `audit_mode` and `routing_bucket` were set on the
-message:
-
-```text
-// 3.x
-let message = Message::builder()
-    .payload_json(&payload)
-    .capture_changes(false)
-    .audit_mode(AuditMode::Last(10))
-    .routing_bucket(7)
-    .build();
-```
-
-They are choices about a run, so they moved to `RunOptions`, with unchanged
-defaults. None of the three ever serialized, so no stored message changes:
+`capture_changes`, `audit_mode`, and `routing_bucket` have moved from
+`MessageBuilder` to `RunOptions`:
 
 ```rust
 use dataflow_rs::run::AuditMode;
@@ -609,16 +523,9 @@ let opts = RunOptions::default()
 # assert_eq!(opts.routing_bucket, Some(7));
 ```
 
-The path helpers took a dotted string on every call:
-
-```text
-// 3.x
-use dataflow_rs::engine::utils::{get_nested_value, set_nested_value, remove_nested_value};
-set_nested_value(message.data_mut(), "user.name", value);
-```
-
-4.0 parses a `Path` once and reads or writes through it, or through the
-`Context` it names:
+Replace string-based `get_nested_value` / `set_nested_value` /
+`remove_nested_value` calls with pre-parsed `Path` operations on
+`message.context()` / `message.context_mut()`:
 
 ```rust
 use dataflow_rs::datavalue::OwnedDataValue;
@@ -632,45 +539,18 @@ assert_eq!(message.context().get(&name), Some(&OwnedDataValue::from(&json!("Ada"
 let removed = message.context_mut().remove(&name)?;
 assert!(removed.is_some());
 
-// A path must start at a root.
+// Every Path must start with `data`, `metadata`, or `temp_data`:
 assert!("payload.x".parse::<Path>().is_err());
 # Ok::<(), dataflow_rs::Error>(())
 ```
 
-`RetryPolicy`, `retry_with_policy` and `retry_with_attempts` are removed.
-Retry is the host's policy: `Run::retryable()` says whether running the
-message again may succeed, and `Error::is_retryable()` the same for a stop.
+### Wire Format for Messages
 
-### The trace, on the wire
-
-A 3.x trace carried a message snapshot per step. A 4.0 trace is
-`{initial, steps, truncated}`: the context after the run's stamps, then one
-`TraceStep` per call, skipped step, failure and engine write, each with its
-`changes`. Three things are new in a step:
-
-- `result` can be `failed`: the step whose failure went to the workflow's
-  policy or stopped the run, which 3.x dropped.
-- `errors` is every record the step added to the message, in place of the
-  snapshot's error list.
-- a `map` step carries `mapping_ends`, where each mapping's changes end in
-  `changes`, in place of `mapping_contexts`; `Trace::mapping_contexts(step)`
-  replays them.
-
-Both keys are written only when non-empty. A trace reads back through
-`Deserialize`, and `Trace::contexts()` replays it to the run's context on
-every status, so a host that showed snapshots replays instead.
-
-### Messages, on the wire
-
-The message JSON is unchanged: `{id, payload, context, audit_trail,
-errors}`, with audit entries and error records keeping the same keys in the
-same order, and every message 4.0 writes reads back byte for byte. Deserializing
-a `Message` rejects: a context with a key besides `data`, `metadata`, and
-`temp_data`, a non-object context, or a duplicate root key; a non-object root;
-and any object in the message containing duplicate keys. In 3.x, `map` could
-write a fourth key for a path outside the three roots or replace a root with a
-scalar, and a `null` `metadata` root dropped writes under it, including
-`metadata.progress`. Stored messages with those shapes no longer deserialize.
+The serialized JSON format of `Message` (`{id, payload, context, audit_trail, errors}`)
+is unchanged, and every valid 3.x message deserializes cleanly in 4.0. Note that
+4.0's `Message` deserializer strictly enforces that `context` contains only the
+three object roots (`data`, `metadata`, and `temp_data`) and rejects duplicate
+JSON keys:
 
 ```rust
 use dataflow_rs::Message;
@@ -685,35 +565,34 @@ assert!(refused.starts_with("a context holds only `data`, `metadata` and `temp_d
 # Ok::<(), serde_json::Error>(())
 ```
 
-### The wasm and UI packages
+### WASM and UI Packages
 
-`@goplasmatic/dataflow-wasm` 4.0 has one `WasmEngine`, built with
-`new WasmEngine(workflows, { secrets })` and run with
-`engine.run(payload, options)`, which resolves on every status with
-`{ message, run, trace? }` and throws a structured `EngineError` for a
-refused definition; see [its page](../wasm/overview.md). The
-`@goplasmatic/dataflow-ui` 4.0 debugger takes the wasm package's generated
-types, replays each step's context from the trace instead of reading
-snapshots, and reads a node's `ext.path`; see
-[its page](../ui/overview.md).
+- `@goplasmatic/dataflow-wasm` 4.0 provides a single `WasmEngine` class
+  constructed with `new WasmEngine(workflows, { secrets })` and executed via
+  `await engine.run(payload, options)` (returning `{ message, run, trace? }`).
+  See [WASM Package](../wasm/overview.md).
+- `@goplasmatic/dataflow-ui` 4.0 uses the generated TypeScript bindings from the
+  WASM package and replays step contexts from incremental traces. See
+  [UI Package](../ui/overview.md).
 
-## Before switching
+## Pre-Migration Checklist
 
-Run 4.0 over every stored definition before any message does.
+Before deploying 4.0 in production, run this validation pass over all stored
+workflow definitions:
 
-1. **Parse and check each definition** with `def::parse` and
-   `Compiler::check`, against the registry the host will run with.
-2. **Fix what is Rejected, and every `LIKELY_TYPO`.** A Rejected issue is a
-   workflow that will not load; a `LIKELY_TYPO` is a setting that never
-   took effect.
-3. **Read the Advisories.** `V3_SPELLING` says what the reader rewrote;
-   `UNKNOWN_KEY` says what moved into `ext`.
-4. **Store `migrate_v3`'s output,** so the definitions are in the 4.0
-   spelling and parse with the reader off.
-5. **Store each workflow's `Fingerprint`,** the operators and data keys its
-   expressions use, to see what a later change touches.
-6. **For a host that stores messages,** find any whose context holds a key
-   outside the three roots: it no longer reads.
+1. **Parse and check every stored workflow** with `def::parse` and
+   `Compiler::check` against your production `Registry`.
+2. **Fix all `Rejected` issues and `LIKELY_TYPO` defects.** Any workflow with a
+   `Rejected` issue will not load, and any `LIKELY_TYPO` points to a misspelled
+   field that was previously ignored.
+3. **Review `Advisory` issues** (`V3_SPELLING` shows what was rewritten;
+   `UNKNOWN_KEY` shows what moved into `ext`).
+4. **Persist the output of `compat::migrate_v3`** so your stored definitions use
+   canonical 4.0 spellings and can be parsed with `.compat(false)`.
+5. **Record each workflow's `Fingerprint`** (`compiled.workflow.fingerprint()`)
+   to track which operators and context paths each workflow depends on.
+6. **Check stored messages (if applicable)** to ensure no historical serialized
+   `Message` has a fourth key in `context` or a non-object context root.
 
 ```rust
 use dataflow_rs::compat::migrate_v3;
@@ -751,6 +630,3 @@ for json in &stored {
 # assert_eq!(ready[0].0["on_failure"], "continue");
 # assert!(ready[0].1.starts_with("v1:"));
 ```
-
-A `Fingerprint` displays as `v1:` and sixteen hex digits, and parses back
-with `str::parse`.

@@ -1,46 +1,30 @@
 # Publish Functions
 
-`publish_json` and `publish_xml` serialize a value under `data` into a string
-under `data`. Workflows use them as a final step to format output payloads.
+`publish_json` and `publish_xml` serialize a value from `data` into a formatted JSON or XML string under `data`. Workflows typically use them as a final step to prepare an output payload.
 
-Both share one config:
+Both functions share a common configuration structure:
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `source` | string \| JSONLogic | Yes | | What to serialize, relative to `data`: `response` is `data.response`, `response.user` is `data.response.user` |
-| `target` | string \| JSONLogic | Yes | | Where the text is written, relative to `data` |
-| `pretty` | boolean | No | `false` | Indent the JSON. `publish_json` only |
-| `root_element` | string \| JSONLogic | No | `"root"` | The document's root element. `publish_xml` only |
+| `source` | string \| JSONLogic | Yes | — | Source path relative to `data` (for example, `"response"` reads `data.response`, and `"response.user"` reads `data.response.user`) |
+| `target` | string \| JSONLogic | Yes | — | Destination path relative to `data` where the serialized string is written |
+| `pretty` | boolean | No | `false` | Format the output as pretty-printed, indented JSON (`publish_json` only) |
+| `root_element` | string \| JSONLogic | No | `"root"` | Name of the outer XML root element (`publish_xml` only) |
 
-`source` and `target` name locations, never values, and either may be
-computed from the message. A `source` that begins with `data.` is read with
-3.x's fallback: `data.response` reads `data.data.response` and, when that is
-missing, `data.response`; an empty `source` (`""`) or `"data."` serializes the
-whole of `data`. Naming the other function's field (`root_element` on
-`publish_json`, or `pretty` on `publish_xml`) is ignored and reported as an
-`UNKNOWN_KEY` advisory at that key.
+- Both `source` and `target` name paths relative to `data` (not inline values), and either can be a dynamic JSONLogic expression.
+- For compatibility with 3.x workflows, a `source` that starts with `"data."` (such as `"data.response"`) first checks `data.data.response` and falls back to `data.response` if absent; an empty `source` (`""`) or `"data."` serializes the entire `data` object.
+- Specifying `root_element` on `publish_json` or `pretty` on `publish_xml` is ignored and reported as an `UNKNOWN_KEY` advisory.
+- **Missing or `null` source:** The value at `source` must exist and not be `null`; otherwise the task fails with `VALIDATION_ERROR` (status `500`, governed by `on_failure`):
 
-The source must exist and not be `null`. Otherwise the call fails with
-`VALIDATION_ERROR`:
+  ```text
+  Validation error: PublishJson: Source 'data.absent' not found or is null
+  ```
 
-```text
-Validation error: PublishJson: Source 'data.absent' not found or is null
-```
+- **No secrets:** Because `source`, `target`, and `root_element` affect data written to the message and audit trail, none of them may reference `{"secret": "..."}` (`SECRET_IN_MESSAGE_WRITE`). See [Secrets](../advanced/secrets.md).
 
-The audit entry records `500`, the message gets the record as
-`Task <id> error: <message>`, and the task's `on_failure` decides: by default
-the failure reaches the workflow and stops the run; with
-`"on_failure": "continue"` the next task runs. A computed parameter that
-fails to evaluate fails the call the same way, with `LOGIC_ERROR`.
+## `publish_json`
 
-Both parameters name where the engine writes, and the destination is recorded
-in each `Change`, so neither may read `{"secret": …}`, and nor may
-`root_element`, which is written into the document. See
-[Secrets](../advanced/secrets.md).
-
-## publish_json
-
-Serializes the source to JSON text: compact, or indented with `pretty`.
+Serializes the value at `data.<source>` into a JSON string at `data.<target>`:
 
 ```json
 {
@@ -54,7 +38,7 @@ Serializes the source to JSON text: compact, or indented with `pretty`.
 }
 ```
 
-With `data.response` at `{"status": "success", "count": 42}`:
+When `data.response` is `{"status": "success", "count": 42}`, this writes:
 
 ```json
 {
@@ -71,17 +55,9 @@ With `"pretty": true`:
 }
 ```
 
-A scalar source serializes too: `"source": "response.count"` writes `"42"`.
+Scalar values (strings, numbers, booleans) and arrays can also be serialized (for example, `"source": "response.count"` writes `"42"`). Both compact and pretty JSON output preserve the source object's key insertion order.
 
-### Key order
-
-Compact and pretty JSON both keep the source's key order, in every build. A
-value written as `z` then `a` publishes as `{"z":1,"a":…}`, compact or
-indented. 3.x's default build sorted the keys of pretty JSON, and of XML,
-unless `serde_json`'s `preserve_order` was on; 4.0 keeps the order in every
-build.
-
-### Computed parameters
+### Dynamic `source` and `target`
 
 ```json
 {
@@ -90,12 +66,11 @@ build.
 }
 ```
 
-With `data.format` at `"a"`, this serializes `data.outputs.a` into
-`data.rendered_a`.
+When `data.format` is `"a"`, this serializes `data.outputs.a` into `data.rendered_a`.
 
-## publish_xml
+## `publish_xml`
 
-Serializes the source to an XML document under the root element.
+Serializes the value at `data.<source>` into an XML document string wrapped in `<root_element>`:
 
 ```json
 {
@@ -110,7 +85,7 @@ Serializes the source to an XML document under the root element.
 }
 ```
 
-With `data.user` at `{"name": "Alice", "age": 30, "tags": ["a", "b"], "active": true, "note": null}`:
+When `data.user` is `{"name": "Alice", "age": 30, "tags": ["a", "b"], "active": true, "note": null}`, this writes:
 
 ```json
 {
@@ -118,50 +93,40 @@ With `data.user` at `{"name": "Alice", "age": 30, "tags": ["a", "b"], "active": 
 }
 ```
 
-Without `root_element` the document is wrapped in `<root>`. `root_element`
-is JSONLogic too, so one task can name the document after the message:
+If `root_element` is omitted, the document is wrapped in `<root>`. Because `root_element` accepts a JSONLogic expression, you can also compute the root tag name dynamically from the message:
 
 ```json
 {"source": "user", "target": "doc", "root_element": {"var": "data.doc_type"}}
 ```
 
-The root element's name is sanitized as a key's is (below), so a computed
-name can never close the root and open elements of its own:
-`"x><admin>true</admin><x"` names the element `x__admin_true__admin__x`.
+### JSON-to-XML Conversion Rules
 
-### JSON to XML conversion
-
-| Value | Written as |
+| JSON Value | XML Output |
 |-------|------------|
-| An object | One element per key, in the object's order, named after the key |
-| An array | One `<item>` element per element |
-| A string | Its text, with `&`, `<`, `>`, `"` and `'` escaped |
-| A number or boolean | Its text |
-| `null` | An empty element |
+| Object | One child element per key (in key order), named after the key |
+| Array | One `<item>` element per array element |
+| String | Escaped text content (`&`, `<`, `>`, `"`, and `'` are XML-escaped) |
+| Number or boolean | Text representation (`30`, `true`, `false`) |
+| `null` | Empty element (`<key></key>`) |
 
-A key that is not an XML name is sanitized: a first character that is not a
-letter or `_` gets a `_` in front, any other character that is not a letter,
-digit, `-`, `_` or `.` becomes `_`, and an empty key becomes `_element`.
+Object keys and `root_element` names are automatically sanitized into valid XML element names so untrusted or dynamic keys can never inject XML tags:
+- If the first character is not an ASCII letter or `_`, a leading `_` is prepended.
+- Any character other than an ASCII letter, digit, `-`, `_`, or `.` is replaced with `_`.
+- An empty key becomes `_element`.
 
-| Key | Element |
+| JSON Key | Sanitized XML Tag |
 |-----|---------|
 | `123field` | `<_123field>` |
 | `field name` | `<field_name>` |
 | `field@attr` | `<field_attr>` |
 | `ok-name_1.x` | `<ok-name_1.x>` |
-| (empty) | `<_element>` |
+| `""` (empty) | `<_element>` |
 
-`publish_xml` is not the inverse of `parse_xml`. The `$text` and `@name` keys
-`parse_xml` produces are ordinary keys here, and sanitization turns them into
-`<_text>` and `<_name>` elements, not a text node or an attribute:
-`{"name": {"$text": "Alice"}}` publishes as
-`<root><name><_text>Alice</_text></name></root>`. Lift the `$text` leaves
-with a `map` first; see
-[XML to JSON conversion](./parse.md#xml-to-json-conversion).
+> **Note:** `publish_xml` is not a direct inverse of `parse_xml`. The `$text` and `@attr` keys produced by `parse_xml` are treated as ordinary object keys by `publish_xml` and sanitized into `<_text>` and `<_attr>` elements (`{"name": {"$text": "Alice"}}` serializes as `<root><name><_text>Alice</_text></name></root>`). Use a `map` task to flatten `$text` fields into plain values before calling `publish_xml`; see [Parse Functions → XML-to-JSON Conversion Rules](./parse.md#xml-to-json-conversion-rules).
 
-## Common patterns
+## Common Patterns
 
-### Request in, response out
+### JSON Request In, JSON Response Out
 
 ```json
 {
@@ -189,7 +154,7 @@ with a `map` first; see
 }
 ```
 
-### XML in, XML out
+### XML In, XML Out
 
 ```json
 {
@@ -217,7 +182,7 @@ with a `map` first; see
 }
 ```
 
-### Both formats
+### Publishing Both JSON and XML
 
 ```json
 {
@@ -234,7 +199,7 @@ with a `map` first; see
 }
 ```
 
-### A missing source, without stopping the run
+### Continuing When the Source Is Missing
 
 ```json
 {
@@ -253,12 +218,10 @@ with a `map` first; see
 }
 ```
 
-`publish` records `500` and the record
-`VALIDATION_ERROR` `Task publish error: Validation error: PublishJson: Source 'data.absent' not found or is null`,
-and `after` runs. The run ends `CompletedWithErrors`.
+Here, `publish` records status `500` and a `VALIDATION_ERROR` (`Task publish error: Validation error: PublishJson: Source 'data.absent' not found or is null`), and because `"on_failure": "continue"` is set, `after` still runs and the run finishes as `CompletedWithErrors`.
 
 ## Next Steps
 
-- [Parse](./parse.md): read the input
-- [Map](./map.md): shape the value to publish
-- [Validation](./validation.md): check it before publishing
+- [Parse](./parse.md) — Parse incoming JSON and XML payloads
+- [Map](./map.md) — Transform and shape data before publishing
+- [Validation](./validation.md) — Validate fields before publishing

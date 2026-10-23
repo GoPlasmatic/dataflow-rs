@@ -1,8 +1,6 @@
 # Log Function
 
-`log` emits a log line through the Rust [`log`](https://docs.rs/log) crate,
-with a message and structured fields computed from the message. It writes
-nothing to the context and always returns `200`.
+The `log` function emits structured log messages through the Rust [`log`](https://docs.rs/log) crate, with a dynamic message string and optional key-value fields evaluated against the message context. It never modifies the context and always succeeds with status `200`.
 
 ```json
 {
@@ -24,15 +22,15 @@ nothing to the context and always returns `200`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `level` | string | No | `trace`, `debug`, `info` (the default), `warn` or `error` |
-| `message` | JSONLogic | Yes | The line's text |
-| `fields` | object | No | Structured fields, each JSONLogic, emitted in key order |
+| `level` | string | No | Log level: `"trace"`, `"debug"`, `"info"` (default), `"warn"`, or `"error"` |
+| `message` | JSONLogic | Yes | Expression computing the log message text |
+| `fields` | object | No | Map of structured field names to JSONLogic expressions (emitted sorted by key) |
 
-## The line
+## Output Format
 
-The line is `message [key=value, ...]`, the fields sorted by key. A result
-that is a string is written as it is; anything else as compact JSON. Over
-`{"order": {"id": "ORD-7", "total": 99.5, "items": [1, 2]}, "customer": {"name": "Ada"}}`,
+Each log entry is formatted as `message [key=value, ...]` with `fields` sorted alphabetically by key. String values are formatted directly, while non-string values (numbers, booleans, arrays, objects) are serialized as compact JSON.
+
+For example, given `data = {"order": {"id": "ORD-7", "total": 99.5, "items": [1, 2]}, "customer": {"name": "Ada"}}`:
 
 ```json
 {
@@ -47,44 +45,41 @@ that is a string is written as it is; anything else as compact JSON. Over
 }
 ```
 
-emits, at `info` under the target `dataflow::log`:
+emits the following log line at `info` level under the `dataflow::log` target:
 
 ```text
 Processing order ORD-7 for 99.5 [customer=Ada, items=[1,2], order_id=ORD-7, total=99.5]
 ```
 
-An expression that fails to evaluate is written as `<eval error>`, in the
-message or in a field, and the failure is logged at `error` by the engine
-itself. The task still returns `200`:
+If an expression in `message` or `fields` fails to evaluate, `"<eval error>"` is written in its place, the evaluation error is logged at `error` level by the engine, and the `log` task still finishes with status `200`:
 
 ```text
 <eval error> [x=<eval error>]
 ```
 
-## Levels
+## Log Levels
 
-| Level | Use |
+| Level | Typical Use |
 |-------|-----|
-| `trace` | Very detailed tracing: every value on the way through |
-| `debug` | Intermediate state while developing a workflow |
-| `info` | Processing milestones |
-| `warn` | Unusual but handled states |
-| `error` | Failures the workflow handled |
+| `trace` | Detailed step-by-step values during deep debugging |
+| `debug` | Intermediate state while developing workflows |
+| `info` | Key workflow milestones |
+| `warn` | Unexpected but recoverable conditions |
+| `error` | Handled errors or fallback paths |
 
-A level the logger filters out costs nothing: when `dataflow::log` is not
-enabled at the task's level, no expression is evaluated and the call returns
-`200`. A `trace` task under an `info` logger does no work at all.
+> **Zero overhead when filtered out:** Before evaluating `message` or `fields`, `log` checks `log::log_enabled!` for the task's level on target `dataflow::log`. When that level is disabled by your logger configuration (for example, a `debug` task when running at `info` level), no expressions are evaluated.
 
-## The target
+## Configuring Your Logger (`dataflow::log` Target)
 
-Every line is emitted under the target `dataflow::log`, so a logging
-configuration can address it on its own. With `env_logger`:
+All workflow `log` tasks emit under the `dataflow::log` target so you can filter workflow logs independently from internal engine logs.
+
+With `env_logger` via environment variable:
 
 ```bash
 RUST_LOG=dataflow::log=info cargo run
 ```
 
-Or in code:
+Or in Rust code:
 
 ```rust
 env_logger::Builder::new()
@@ -92,13 +87,9 @@ env_logger::Builder::new()
     .init();
 ```
 
-The engine's own lines, such as a `map` mapping's failure or a `log`
-expression's evaluation error, go under the engine's module targets, not
-under `dataflow::log`.
-
 ## Examples
 
-### A static message
+### Static Log Message
 
 ```json
 {
@@ -107,9 +98,9 @@ under `dataflow::log`.
 }
 ```
 
-### A warning on an edge case
+### Conditional Warning
 
-A task `condition` keeps the line for the messages it is about:
+Combine `log` with a task `condition` to log only when an edge case occurs:
 
 ```json
 {
@@ -125,7 +116,7 @@ A task `condition` keeps the line for the messages it is about:
 }
 ```
 
-### Debugging a context
+### Dumping Context State for Debugging
 
 ```json
 {
@@ -144,20 +135,6 @@ A task `condition` keeps the line for the messages it is about:
 }
 ```
 
-The `data` field writes the whole of `data` as compact JSON.
+## Secrets Protection
 
-## Secrets
-
-A log line leaves the engine, so neither `message` nor any field may read
-`{"secret": "name"}`: the definition is refused with
-`SECRET_IN_MESSAGE_WRITE` at the expression. See
-[Secrets](../advanced/secrets.md).
-
-## Notes
-
-- `log` never modifies the message and never fails: every call records
-  `200` with no changes.
-- The expressions are compiled when the engine is built; a static message
-  folds to a constant.
-- The fields are a `BTreeMap`, so they are emitted sorted by key whatever
-  order they were written in.
+Because log lines leave the engine, neither `message` nor any expression in `fields` may reference `{"secret": "name"}`—compilation rejects the workflow at build time with `SECRET_IN_MESSAGE_WRITE`. See [Secrets](../advanced/secrets.md).

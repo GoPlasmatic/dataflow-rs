@@ -1,44 +1,48 @@
-# Audit Trails
+# Audit Trails and Execution Traces
 
-A run leaves two records of what it did to a message: the **audit trail**,
-one entry per task that ran, kept on the message; and, when asked for, a
-**trace**, the initial context plus every change, from which the context
-after any step can be rebuilt. This page covers both, and the knobs that
-bound them.
+Dataflow-rs provides two ways to inspect what a run did to a message:
 
-## The audit trail
+- The **audit trail**: one `AuditEntry` per executed task, stored directly on the
+  `Message`.
+- An **execution trace** (optional): a record of the initial context and every
+  step-by-step change, allowing you to reconstruct the exact message context at
+  any point in the run.
 
-Every task that ran, and did not `Skip`, appends one `AuditEntry` to the
-message:
+This guide covers both mechanisms and how to configure their memory footprint.
 
-| Field | Holds |
+## The Audit Trail
+
+Every task that executes (and does not return `Outcome::Skip`) appends an
+`AuditEntry` to `message.audit()`:
+
+| Field | Description |
 |---|---|
-| `workflow_id`, `task_id` | Where the entry came from |
-| `timestamp` | The run's one clock reading: every entry of a run carries the same instant |
-| `status` | The task's status code: `200` for `Outcome::Ok`, the code of `Status(n)`, `299` for `Halt`, `500` for an `Err` |
-| `changes` | The writes the task made, when changes are captured |
-| `loop_counter` | The sweep's counter, inside a workflow's [`loop`](./loops.md); absent otherwise |
-| `element_index` | The element, inside a [`for_each`](./for-each.md); absent otherwise |
+| `workflow_id`, `task_id` | Identifies the workflow and task that produced the entry. |
+| `timestamp` | The run's timestamp (all entries in a single run share the same clock reading). |
+| `status` | The task's status code: `200` for `Outcome::Ok`, `n` for `Status(n)`, `299` for `Halt`, or `500` for `Err`. |
+| `changes` | The list of context writes made by the task (when change capture is enabled). |
+| `loop_counter` | The current iteration counter when inside a workflow [`loop`](./loops.md); omitted otherwise. |
+| `element_index` | The current array index when inside a task [`for_each`](./for-each.md); omitted otherwise. |
 
-Each `Change` is one write or removal:
+Each `Change` in `entry.changes` represents a single write or key removal:
 
-| Field | Holds |
+| Field | Description |
 |---|---|
-| `path` | The dotted path written, `data.full_name` |
-| `old_value` | What the path held before; `null` when it was absent |
-| `new_value` | The value written; `null` for a removal |
-| `removed` | The key was removed rather than written. Absent in JSON when `false` |
+| `path` | The dotted context path that was modified (e.g., `data.full_name`). |
+| `old_value` | The previous value at `path`, or `null` if the key did not exist. |
+| `new_value` | The new value written at `path`, or `null` if the key was removed. |
+| `removed` | `true` if the key was removed rather than set to `null` (omitted in JSON when `false`). |
 
-`removed` marks a removal: a `map` mapping with `unset`, `on_null: "unset"`
-meeting a `null` result, or a host function's `ctx.remove`. `new_value` is
-then `null`, which on its own could not tell "now absent" from "now holds
-`null`", so read the flag. A `Change` also carries `replaced`, which only a
-trace sets (see below); on an audit entry it is always `false` and absent
-from the JSON.
+Because `new_value` is `null` both when a field is set to `null` and when a
+field is removed (via `map`'s `"unset": true`, `on_null: "unset"`, or
+`ctx.remove` in a host function), check `change.removed` to distinguish a
+removal from a `null` assignment. (`Change` also has a `replaced` field used
+exclusively by execution traces; on audit entries it is always `false` and
+omitted in JSON.)
 
-A host function that returns `Err` still records an entry, with `status`
-`500` and an empty `changes` list: its writes were dropped, so there is
-nothing to record. The error itself goes to `message.errors()`.
+If a custom host function returns `Err`, the engine discards its buffered
+context writes and still records an `AuditEntry` with `status: 500` and an empty
+`changes` list, while appending the error details to `message.errors()`.
 
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -78,9 +82,10 @@ assert_eq!(entry.changes[1].old_value, OwnedDataValue::from(&json!("Ada")));
 # });
 ```
 
-### JSON representation
+### JSON Format
 
-The trail is written as `audit_trail` on the message, as 3.x wrote it:
+When a `Message` is serialized to JSON, the audit trail is written under the
+`audit_trail` key:
 
 ```json
 {
@@ -99,40 +104,43 @@ The trail is written as `audit_trail` on the message, as 3.x wrote it:
 }
 ```
 
-### What gets tracked
+### What Gets Recorded in `changes`
 
-- **`map`** records one `Change` per mapping that wrote: a write, a removal,
-  or, for `mode: "append"` and `"extend"`, one per element appended at
-  `path.<index>`.
-- **A host function** records one `Change` per `ctx.set`, `ctx.emit` or
-  `ctx.remove`, in call order, once the call returns `Ok`. A second write to
-  one path leaves two changes and one value.
-- **`validation`** writes nothing, so its entry carries an empty `changes`
-  list; its `status` is `200` when every rule passed and `400` when one
-  failed. The rules that failed land on `message.errors()`.
-- **The engine's own writes are not changes.** `metadata.progress` after
-  every task, a loop's counter, element and scratch, and a fan-out's result
-  array land outside any entry. A trace records them.
+- **`map`**: Records one `Change` per mapping that modified the context (a
+  write, a removal, or—for `mode: "append"` and `"extend"`—one `Change` per
+  appended element at `path.<index>`).
+- **Custom host functions**: Records one `Change` per `ctx.set`, `ctx.emit`, or
+  `ctx.remove` call in execution order once the call returns `Ok`.
+- **`validation`**: Modifies no context fields, so its `changes` list is empty.
+  Its `status` is `200` when all rules pass and `400` when any rule fails (failed
+  rules are recorded in `message.errors()`).
+- **Engine bookkeeping writes**: Internal context updates—such as
+  `metadata.progress`, loop counters/elements/scratch paths, and `for_each`
+  result arrays—are not added to task audit entries, though they are captured in
+  execution traces.
 
-Only `Outcome::Skip` suppresses an entry entirely.
+Only `Outcome::Skip` suppresses the `AuditEntry` altogether.
 
-## Bounding the trail
+## Bounding Audit Trail Memory
 
-Two options on the run decide what the message keeps. Both used to sit on
-the message in 3.x; in 4.0 they are `RunOptions`, so one message can be run
-either way.
+Two options on `RunOptions` control how much audit data a run retains on the
+message:
 
-**`capture_changes`** (default `true`) decides whether each write's `Change`
-is recorded. Capturing copies the old and the new value of every write, which
-is the largest cost in a mapping-heavy workload and grows with every sweep
-of a long loop. With it off, every entry's `changes` is empty; the entries,
-statuses and error records are unchanged.
+- **`capture_changes(bool)`** (default `true`): Controls whether each write's
+  old and new values are cloned into `entry.changes`. Cloning values on every
+  write is the main allocation cost in mapping-heavy pipelines and long loops.
+  Setting `capture_changes(false)` leaves `entry.changes` empty while preserving
+  the audit entries, status codes, and error records.
+- **`audit(AuditMode)`** (default `AuditMode::Full`): Controls how many audit
+  entries are kept:
+  - `AuditMode::Full`: Keeps all audit entries.
+  - `AuditMode::Last(n)`: Keeps only the most recent `n` entries in a ring
+    buffer.
+  - `AuditMode::Off`: Keeps no audit entries (and automatically disables change
+    capture, just like `Last(0)`).
 
-**`audit`** (default `AuditMode::Full`) decides which entries are kept:
-`Full` keeps every one, `Last(n)` the most recent `n`, and `Off` none. Under
-`Off` and `Last(0)` no changes are recorded either, since no entry would
-hold them. Control flow, error records and `metadata.progress` are the same
-in every mode; only the trail is.
+Control flow, error records, and `metadata.progress` behave identically across
+all audit modes.
 
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -149,19 +157,19 @@ let engine = Engine::builder()
     .build()
     .unwrap();
 
-// Every entry, without the values.
+// Keep all audit entries, but omit the old/new value snapshots:
 let mut message = Message::from_json(&json!({}));
 engine.run_with(&mut message, &RunOptions::default().capture_changes(false)).await;
 assert_eq!(message.audit().len(), 3);
 assert!(message.audit().iter().all(|e| e.changes.is_empty()));
 
-// The last two entries only.
+// Keep only the last 2 audit entries:
 let mut message = Message::from_json(&json!({}));
 engine.run_with(&mut message, &RunOptions::default().audit(AuditMode::Last(2))).await;
 let kept: Vec<&str> = message.audit().iter().map(|e| &*e.task_id).collect();
 assert_eq!(kept, ["b", "c"]);
 
-// No trail at all; the context is still written.
+// Disable the audit trail completely; context writes still take effect:
 let mut message = Message::from_json(&json!({}));
 engine.run_with(&mut message, &RunOptions::default().audit(AuditMode::Off)).await;
 assert!(message.audit().is_empty());
@@ -169,47 +177,48 @@ assert_eq!(message.to_json()["context"]["data"], json!({"a": 1, "b": 2, "c": 3})
 # });
 ```
 
-## Traces
+## Execution Traces
 
-A trace is asked for per run with `RunOptions::trace(TraceOptions)` and
-comes back on the `Run` (`run.trace()`, or `run.take_trace()` to own it).
-It holds:
+To record a full execution trace for a run, pass
+`RunOptions::trace(TraceOptions)` to `engine.run_with` and retrieve the trace
+from the returned `Run` via `run.trace()` (or `run.take_trace()`). A `Trace`
+contains:
 
-- **`initial`**: the context after the run's stamps (`metadata.processed_at`,
-  `metadata.engine_version`, `metadata.channel` under a channel) and before
-  any workflow;
-- **`steps`**: one `TraceStep` per recorded call, per step a condition
-  skipped, per workflow skipped or failed, and per write the engine made as
-  a loop's sweep is entered. Each carries its `result` (`executed`,
-  `skipped` or `failed`), the call's `status`, its `changes` in order (the
-  engine's writes made for it, the call's own, the `metadata.progress`
-  write, the error context's), the `errors` it added, its `loop_counter`
-  and `element_index`, and, when `TraceOptions::timings` asked, how long the
-  call ran;
-- **`truncated`**: whether `TraceOptions::max_bytes` was crossed, after
-  which every step keeps everything but its changes.
+- **`initial`**: The message context after initial run metadata stamps
+  (`metadata.processed_at`, `metadata.engine_version`, and `metadata.channel`)
+  have been written, before any workflow executes.
+- **`steps`**: A sequence of `TraceStep` records covering every executed task,
+  skipped task, skipped or failed workflow, and loop iteration setup write. Each
+  step records its `result` (`executed`, `skipped`, or `failed`), `status`,
+  ordered `changes` (including engine bookkeeping writes such as
+  `metadata.progress` and error-context writes), added `errors`, `loop_counter`,
+  `element_index`, and optional execution duration (when
+  `TraceOptions::timings(true)` is enabled).
+- **`truncated`**: Indicates whether the trace exceeded
+  `TraceOptions::max_bytes`, after which subsequent steps record their metadata
+  without change payloads.
 
-Nothing is snapshotted. The context after any step is `Trace::contexts()`,
-which replays the steps' changes from `initial` in order; the last one is
-the message's context, on every status, the run that stopped included. For
-a `map` step, `Trace::mapping_contexts(step)` replays mapping by mapping.
-For interactive navigation over a long trace, `observe::Replay` keeps one
-working context and seeks on demand (`context_at`, `mapping_context_at`). A
-host that reads a trace from an external caller can validate its paths,
-root writes and `mapping_ends` first with `Trace::validate()`.
+Rather than snapshotting the entire context after every step, `Trace` stores
+only the incremental `changes`. Calling `trace.contexts()` replays those changes
+from `initial` to yield the exact context after each step—and for `map` tasks,
+`trace.mapping_contexts(step)` replays changes mapping by mapping. For
+interactive step-by-step navigation over large traces, `observe::Replay`
+maintains a single working context and seeks on demand (`context_at`,
+`mapping_context_at`). If your application accepts serialized traces from
+external callers, call `trace.validate()` first to verify its paths, root
+writes, and mapping boundaries.
 
-A trace records its own changes whatever `capture_changes` says, which
-governs the audit trail alone. Three differences from the audit entry's
-changes follow:
+Note three differences between trace changes and audit trail changes:
 
-- a trace's `Change` at a context root says `replaced` when a host function
-  wrote the root whole, where `map`'s root mapping merges keys into it; a
-  replay needs to know which, and an audit entry never carries the flag;
-- a host function's `Err` drops its writes, so its `executed` or `failed`
-  step has none; a built-in's step keeps the writes it made before failing,
-  so a replay still reaches the message's context;
-- `TraceOptions::redact` masks the values at named paths in `initial` and in
-  every change, as each is captured; the message keeps the real values.
+- **Independent of `capture_changes`**: Enabling tracing captures step changes
+  in the `Trace` even when `RunOptions::capture_changes(false)` is set for the
+  message's audit trail.
+- **Root replacement tracking**: A trace `Change` at a context root sets
+  `replaced: true` when a host function replaces the root object as a whole,
+  distinguishing it from a `map` root mapping that merges keys into the root.
+- **Path redaction**: `TraceOptions::redact` masks values at specified paths in
+  both `initial` and step `changes` as they are recorded, while leaving the real
+  values intact on the `Message`.
 
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -244,26 +253,29 @@ assert_eq!(steps, [
     ("second", StepResult::Executed),
 ]);
 
-// The replay from `initial` ends at the message's context.
+// Replaying changes from `initial` reproduces the final message context:
 let contexts: Vec<_> = trace.contexts().collect();
 assert_eq!(serde_json::to_value(contexts[0].data()).unwrap(), json!({"a": 1}));
 assert_eq!(contexts.last().unwrap().as_value(), message.context().as_value());
 # });
 ```
 
-A trace serializes as `{initial, steps, truncated}` and reads back from what
-it writes, so a stored trace replays to the same contexts later, in another
-process or in the [UI debugger](../ui/overview.md).
+A `Trace` serializes cleanly to `{initial, steps, truncated}` and deserializes
+back, so you can store traces and replay them later in another service or load
+them into the [UI debugger](../ui/overview.md).
 
-## Observers
+## Lightweight Metrics with `Observer`
 
-For counters, histograms and spans kept by the host as a run goes, an
-`Observer` is cheaper than a trace: it is called inline with each event it
-asked for (`RunStarted`, `WorkflowStarted`, `TaskFinished`,
-`WorkflowFinished`, `RunFinished`), copies out what it keeps, and returns.
-Attach one to every run with `EngineConfig::observer` or to one run with
-`RunOptions::observer`. Its `interest()` decides which events it gets, and
-no clock is read unless it asks for `Interest::TIMINGS`.
+When you want to collect metrics, counters, histograms, or tracing spans during
+execution without the overhead of building a full `Trace`, implement `Observer`.
+The engine invokes your observer inline for each event it subscribes to
+(`RunStarted`, `WorkflowStarted`, `TaskFinished`, `WorkflowFinished`,
+`RunFinished`).
+
+Attach an observer globally via `EngineConfig::observer` or for a single run via
+`RunOptions::observer`. Override `Observer::interest()` to select which events
+you want to receive; the engine only reads the system clock for task timings if
+your observer requests `Interest::TIMINGS`.
 
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -299,11 +311,9 @@ assert_eq!(calls.0.load(Ordering::Relaxed), 1);
 # });
 ```
 
-## Use cases
+## Common Use Cases
 
-### Debugging
-
-Find where a value was set:
+### Debugging Where a Field Changed
 
 ```rust
 # fn _demo(message: dataflow_rs::Message) {
@@ -318,7 +328,7 @@ for entry in message.audit() {
 # }
 ```
 
-### Change detection
+### Detecting Whether a Field Was Modified
 
 ```rust
 use dataflow_rs::Message;
@@ -333,23 +343,22 @@ fn was_field_modified(message: &Message, field: &str) -> bool {
 # let _ = was_field_modified;
 ```
 
-### Compliance
+### Compliance Logging
 
-Persist each entry as it is: `workflow_id`, `task_id`, `timestamp`, `status`
-and `changes` serialize as the JSON above, and an `AuditEntry` reads back
-from what it wrote.
+Each `AuditEntry` serializes and deserializes directly with `serde_json`, making
+it straightforward to persist audit records to an external log or database.
 
-## Practical notes
+## Best Practices
 
-1. **Write through `Ctx`.** A host function's `set`, `emit` and `remove`
-   record the changes; there is no other way to write, so nothing bypasses
-   capture.
-2. **Turn capture off in bulk pipelines** that never read `changes`, with
-   `RunOptions::default().capture_changes(false)`. The entries still record
-   each task's status. See [Memory in long loops](./loops.md#memory-in-long-loops).
-3. **Bound the trail** with `AuditMode::Last(n)` or `AuditMode::Off` when
-   nothing reads it, for instance because the run is traced or routes on
-   `metadata.progress`.
-4. **Trace when you need the context after a step.** The audit trail says
-   what each task wrote; a trace says what the whole context was, and
-   replays on every status.
+1. **Perform all writes through `Ctx`:** Host functions write via `ctx.set`,
+   `ctx.emit`, and `ctx.remove`, ensuring every context modification is captured
+   consistently.
+2. **Disable `capture_changes` in high-throughput pipelines:** If downstream
+   code only needs task status codes and not old/new value snapshots, run with
+   `RunOptions::default().capture_changes(false)`. See
+   [Memory in Long Loops](./loops.md#memory-in-long-loops).
+3. **Bound or disable the audit trail when unused:** Use `AuditMode::Last(n)` or
+   `AuditMode::Off` when you don't inspect `message.audit()`.
+4. **Use `Trace` for step-by-step state inspection:** The audit trail records
+   what each task wrote; a `Trace` lets you reconstruct the complete message
+   context after any step (including skipped steps and engine bookkeeping).

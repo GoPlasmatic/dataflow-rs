@@ -12,62 +12,61 @@
   [![Crates.io](https://img.shields.io/crates/v/dataflow-rs.svg)](https://crates.io/crates/dataflow-rs)
 </div>
 
-**Dataflow-rs** is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. The builder parses, lints, and compiles each definition into a program at build time, and each run reads the clock once.
+**Dataflow-rs** is a lightweight, embeddable rules engine that lets you define **IF → THEN → THAT** automation in JSON. At build time, the engine parses, validates, and compiles your workflow definitions into an immutable program so runtime execution has zero parsing overhead.
 
-Use it to route events, validate data, power REST APIs, or build automation pipelines.
+Use it to route events, validate and transform payloads, power dynamic APIs, or build multi-step automation pipelines.
 
 ### ⚡ Performance
 
-Dataflow-rs targets high-throughput hot paths:
+Dataflow-rs is designed for high-throughput workloads:
 
-*   **Compile at build time.** The compiler validates workflows before any message runs and evaluates constant expressions once.
-*   **One context view per run.** Built-in functions run inline over a single view of the message context, while host functions read that view and write to a per-call overlay.
-*   **One clock read per run.** `metadata.processed_at`, audit entries, and error records share one timestamp. The engine reads the clock again only when an observer or trace requests timings.
-*   **Zero-cost when unwatched.** Without an observer, trace, or error context, calls use the plain recorder.
+*   **Compiled at build time.** The compiler validates workflow definitions, folds constant expressions, and pre-splits field paths before any message is processed.
+*   **Single context view per run.** Built-in functions run inline over a single arena view of the message context, while custom host functions write to a transactional per-call overlay.
+*   **Single clock read per run.** `metadata.processed_at`, audit entries, and error records share a single timestamp. Additional clock reads happen only when an observer or trace explicitly requests per-task timings.
+*   **Zero overhead when unwatched.** When tracing, observers, and error-context mirroring are disabled, execution runs on a streamlined fast path.
 
-See [Performance](./advanced/performance.md) for benchmark results and commands.
+See [Performance](./advanced/performance.md) for benchmark results and methodology.
 
 ### 🧩 Why Choose dataflow-rs?
 
-Dynamic business rules and user-customizable workflows outgrow hardcoded `if/else` checks, while distributed workflow orchestrators (like Temporal or Zeebe) add infrastructure dependencies and network latency. Dataflow-rs sits between the two:
+Dynamic business rules and user-customizable workflows quickly outgrow hardcoded `if/else` statements, while distributed workflow orchestrators (like Temporal or Zeebe) introduce extra infrastructure and network latency. Dataflow-rs sits cleanly between the two:
 
 | Feature | Hardcoded Rust | dataflow-rs | Orchestrators (Temporal/Zeebe) |
 |---|---|---|---|
-| **Reload Rules** | ❌ Recompile & redeploy | ✅ Compile new JSON into a new engine | ❌ Deploy new worker code |
+| **Hot-Reload Rules** | ❌ Recompile & redeploy | ✅ Compile new JSON and swap the program | ❌ Deploy new worker code |
 | **Execution Overhead** | None | **Zero (pre-compiled)** | ❌ DB reads/writes (tens of ms) |
-| **Browser Execution** | ❌ WASM compile size | ✅ Run rules via WASM | ❌ Server round-trip required |
+| **Browser Execution** | ❌ Large WASM bundle | ✅ Run identical rules via WASM | ❌ Server round-trip required |
 | **Visual Debugger** | ❌ Build your own UI | ✅ Included React UI components | ✅ Included Dashboard |
 | **Infrastructure** | None | **None (embeddable library)** | ❌ Server clusters & DBs |
 
 ## Key Features
 
-- **IF → THEN → THAT Model** - Define workflows with JSONLogic conditions, execute tasks, chain workflows with priority ordering
-- **Parse and Lint in One Pass** - `def::parse` reads a definition and reports every issue at the path the author typed, before anything is compiled
-- **Compiled Once** - A `Compiler` compiles each workflow on its own, so one rejected workflow never takes the others down, and links them into an immutable `Program`
-- **A Report for Every Run** - `engine.run(&mut message).await` returns a `Run` on every outcome: how it ended, which workflows matched, and what each did
-- **Full Context Access** - Conditions and mappings read any field of `data`, `metadata` and `temp_data`
-- **Typed Host Functions** - Implement `Function` with a `#[derive(FunctionConfig)]` config; the config is compiled at build time, and a call's writes reach the message only when it returns `Ok`
-- **Layers** - Wrap every host call at registry or run scope: logging, stubbing, dry runs
-- **Deadlines and Cancellation** - A run ends `TimedOut` or `Cancelled` at the next check, and a host call is raced against both
-- **Fan-Out** - Run one task's function once per element of an array, isolated, folded in element order
-- **Task Groups** - Nest tasks under one shared condition, with a terminal group that ends a workflow early
-- **Outcome Policies** - A task's `on_failure` and `on_rejection` say what a failure or a rejection does; a workflow's `on_failure` says whether a failure stops the run
-- **Bounded Loops** - Re-run a workflow's task list a fixed number of times, with the sweep counter in `temp_data`
-- **Traffic Splits** - Roll a workflow out to a slice of its channel's traffic with `rollout`
-- **Observers** - One `on(&Event)` callback with a declared interest; the clock is read only for an observer that asks for timings
-- **Traces** - The initial context plus each step's changes, on every status, replayable to the context after any step
-- **Error Context** - Mirror each failure's code into the context, so a later condition can branch on why a task failed
-- **Secrets Outside the Record** - `{"secret": "name"}` reads an engine-scoped store that no trace, message or log ever contains
-- **Built-in Functions** - Parse, Map, Validation, Filter, Log and Publish for complete data pipelines
-- **Channels and Lifecycle** - Route a run to one channel's workflows; pause or archive a workflow without deleting it
-- **3.x Definitions Load** - The compat reader rewrites 3.x spellings and reports each one, so an installed base migrates at its own pace
-- **WebAssembly Support** - Run rules in the browser with `@goplasmatic/dataflow-wasm`
-- **React UI Components** - Visualize and debug rules with `@goplasmatic/dataflow-ui`
-- **Auditing** - Every write a task makes is recorded on the message's audit trail
+- **IF → THEN → THAT Model** — Define workflows with JSONLogic conditions, execute tasks sequentially, and chain workflows in priority order.
+- **Parse and Lint in One Pass** — `def::parse` validates workflow JSON and reports issues at their exact JSON paths before compilation.
+- **Independent Workflow Compilation** — `Compiler` compiles each workflow individually so you can quarantine invalid definitions while linking valid ones into an immutable `Program`.
+- **Complete Run Reports** — `engine.run(&mut message).await` always returns a `Run` describing how execution finished, which workflows matched, and how each exited.
+- **Full Context Access** — Conditions and mappings can read any field in `data`, `metadata`, and `temp_data`.
+- **Typed Async Host Functions** — Implement `Function` with `#[derive(FunctionConfig)]`. Configs are compiled at build time, and writes are committed to the message only when the call returns `Ok`.
+- **Call Layers (Middleware)** — Wrap host function calls at the registry or per-run level for logging, mocking, or dry runs.
+- **Deadlines and Cancellation** — Enforce per-run timeouts (`TimedOut`) or cancellation tokens (`Cancelled`) that automatically race against in-flight async host calls.
+- **Fan-Out (`for_each`)** — Run a host function across array elements with isolated element bindings and deterministic in-order folding.
+- **Task Groups** — Nest tasks under a shared condition, with optional `terminal` groups for early exit (`if / else if / else`).
+- **Outcome Policies** — Configure `on_failure` and `on_rejection` on tasks, and `on_failure` on workflows, to control error recovery.
+- **Bounded Loops** — Repeat a workflow's task list while a condition holds, up to a configured maximum iteration count.
+- **Traffic Splits (Canary Rollouts)** — Route a percentage of a channel's traffic to a workflow version using `rollout` bucket ranges.
+- **Lightweight Observers** — Subscribe to execution events via a single `Observer::on(&Event)` callback with configurable `Interest` flags.
+- **Replayable Traces** — Capture the initial context and per-step diffs on any run outcome, allowing step-by-step context replay in debuggers.
+- **Error Context Mirroring** — Mirror task failure codes into the message context so subsequent conditions can branch on failure causes.
+- **Isolated Secrets** — Read sensitive values via `{"secret": "name"}` from an engine-scoped store that never leaks into messages, traces, or logs.
+- **Built-in Functions** — `parse_json`, `parse_xml`, `map`, `validation`, `filter`, `log`, `publish_json`, and `publish_xml`.
+- **Channel Routing & Lifecycle** — Route runs to specific channels and manage `active`, `paused`, or `archived` workflows.
+- **3.x Compatibility** — Automatically loads and rewrites 3.x workflow syntax with `V3_SPELLING` advisories.
+- **WebAssembly & React UI** — Run workflows in browsers and Node.js with `@goplasmatic/dataflow-wasm` and visualize/debug them with `@goplasmatic/dataflow-ui`.
+- **Audit Trails** — Track every context modification made by each task.
 
 ## Try It Now
 
-Run dataflow-rs in your browser. Define a workflow and message, then see the processing result.
+Run dataflow-rs right in your browser. Edit the workflow or payload below to see the output update live.
 
 > Open the [Full Debugger UI](/dataflow-rs/debugger/) for step-by-step execution and workflow visualization.
 
@@ -86,14 +85,14 @@ Run dataflow-rs in your browser. Define a workflow and message, then see the pro
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Define Workflows** - Write JSON definitions with conditions and tasks
-2. **Build an Engine** - `Engine::builder().workflow_json(&json).build()` parses, compiles and links every definition; a rejected one fails the build with its issues
-3. **Run Messages** - `engine.run(&mut message).await` runs the message through every matching workflow
-4. **Read the Result** - The `Run` says how it ended and what each workflow did; the message carries the transformed context, its audit trail and its errors
+1. **Define Workflows** — Write JSON workflow definitions with conditions and tasks.
+2. **Build an Engine** — `Engine::builder().workflow_json(&json).build()` parses, compiles, and links your definitions, rejecting invalid workflows at startup with detailed issues.
+3. **Run Messages** — Call `engine.run(&mut message).await` to process a message through all matching workflows.
+4. **Inspect the Result** — Check `Run` for the overall status and per-workflow outcomes, and read the updated context, audit trail, and errors from `Message`.
 
 ## Next Steps
 
-- [Installation](./getting-started/installation.md) - Add dataflow-rs to your project
-- [Quick Start](./getting-started/quick-start.md) - Build your first workflow
-- [Playground](./playground.md) - Experiment with workflows interactively
-- [Migrating from 3.x](./migration/from-3.md) - What changed, and what the compat reader rewrites for you
+- [Installation](./getting-started/installation.md) — Add `dataflow-rs` to your Rust project
+- [Quick Start](./getting-started/quick-start.md) — Build and run your first workflow
+- [Playground](./playground.md) — Experiment with workflows interactively in your browser
+- [Migrating from 3.x](./migration/from-3.md) — Learn what changed in 4.0 and how the compatibility reader helps you upgrade

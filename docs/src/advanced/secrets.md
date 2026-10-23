@@ -1,24 +1,27 @@
 # Secrets
 
-Workflows often need sensitive values that must never appear in messages,
-audit entries, or traces, such as signing keys, partner tokens, and webhook
-secrets. Store these values in the engine's `Secrets` store and read them with
-the `{"secret": "name"}` operator.
+Workflows often need sensitive values—such as signing keys, partner API tokens,
+and webhook secrets—that must never appear in serialized messages, audit
+entries, or execution traces. Store these values in the engine's `Secrets` store
+and read them using the `{"secret": "name"}` operator.
 
-## Why Context Roots Cannot Hold Secrets
+## Why Secrets Belong Outside the Message Context
 
-A message's context (`{data, metadata, temp_data}`) is both the evaluation
-input for JSONLogic and the recorded output of a run: `Serialize for Message`
-writes it out, traces start from it and record every change to it, and audit
-entries store the values tasks write. Any secret placed in the context will end
-up in serialized messages and traces. `TraceOptions::redact` masks paths in a
-trace, but keeping secrets out of the message altogether prevents accidental
-exposure across every output channel.
+A message's context (`{data, metadata, temp_data}`) is both the input to
+JSONLogic expressions and the recorded output of a run: `Message` serializes its
+context directly, execution traces capture the initial context and every change
+made to it, and audit entries record the values written by tasks. Any secret
+placed in `data`, `metadata`, or `temp_data` will inevitably appear in
+serialized messages and traces.
 
-## The store
+While `TraceOptions::redact` can mask specific paths in a trace, keeping secrets
+out of the message context altogether prevents accidental leaks across every
+output channel.
 
-Secrets do not go in the context at all. They go in a `Secrets` store on the
-expression engine, and expressions reach them through one reserved operator:
+## Configuring the `Secrets` Store
+
+Store secrets in a `Secrets` instance on `ExprEngineBuilder`. Workflows can then
+access them through the reserved `{"secret": "name"}` operator:
 
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -27,11 +30,11 @@ use dataflow_rs::expr::{ExprEngine, Secrets};
 use dataflow_rs::{Engine, Message, Registry};
 use serde_json::json;
 
-// The host owns resolution: an environment variable, a vault, a file. Here
-// the webhook accepts the current token and the next one, mid-rotation.
+// Resolve secret values from your environment, vault, or config file first.
+// Here, the webhook accepts both the current token and the next token during rotation.
 let store = Secrets::new(OwnedDataValue::from(&json!({
     "webhook_tokens": ["tok-7f2a", "tok-next-91c0"],
-    "partner": {"hmac": "hmac-3d4e"}   // nested is fine: {"secret": "partner.hmac"}
+    "partner": {"hmac": "hmac-3d4e"}   // Nested objects can be accessed via dotted paths: {"secret": "partner.hmac"}
 })))
 .unwrap();
 let exprs = ExprEngine::builder().secrets(store).build().unwrap();
@@ -59,25 +62,24 @@ let mut message = Message::from_parts(
 engine.run(&mut message).await;
 assert_eq!(message.to_json()["context"]["data"]["accepted"], json!(true));
 
-// The condition read the whole list, and the message carries none of it:
-// the token it holds is the one the request itself brought in.
+// Even though the condition read the full token list, none of the store's secrets
+// appear in the serialized message.
 let wire = serde_json::to_string(&message).unwrap();
 assert!(!wire.contains("tok-next-91c0") && !wire.contains("hmac-3d4e"));
 assert!(!wire.contains("secret"));
 # });
 ```
 
-`Secrets::new` takes the *resolved values*. The store must be an object
-(anything else is a `Config` error); nested objects are allowed so a host can
-namespace, and a dotted name walks into them. The `ExprEngine` holding the
-store is what a `Registry` compiles against, so every workflow the registry's
-engine runs shares one store.
+`Secrets::new` accepts an object of already-resolved secret values (passing a
+non-object returns a `Config` error). You can nest objects to organize secrets
+by namespace and access them with dotted paths like `{"secret": "partner.hmac"}`.
+Because the `Registry` compiles workflows against this `ExprEngine`, all
+workflows in the engine share the same secret store.
 
-`{"secret": "name"}` works anywhere JSONLogic runs on this engine: workflow,
-group and task conditions, `validation` rules, `filter`, and any field of a
-host function's config, which is usually where a credential belongs. A host
-function configured with a key *name* rather than an expression reads it
-directly:
+You can use `{"secret": "name"}` in workflow, group, and task conditions,
+`validation` rules, `filter` conditions, and custom host function inputs. If a
+host function takes a secret *name* as a string parameter rather than a
+JSONLogic expression, it can look up the secret directly via `ctx.secret`:
 
 ```rust
 # use dataflow_rs::Ctx;
@@ -87,74 +89,68 @@ let key = ctx.secret(key_name);   // Option<&OwnedDataValue>
 # }
 ```
 
-## The guarantee
+## Security Guarantees
 
-A secret cannot appear in `Serialize for Message`, in a trace's `initial`
-context or any of its changes, in an audit entry, or in anything a host
-derives from a message, because the store is never part of a `Message`.
-There is nothing to exclude. The types enforce this, so no code path has to,
-and the crate pins it with a test that reads a secret from every place one
-is allowed, runs under every trace policy, and searches every surface a host
-can observe for the value.
+Because the `Secrets` store is never part of a `Message`, secrets cannot leak
+through `Serialize for Message`, trace `initial` snapshots, trace change logs,
+or audit entries.
 
-Three things follow from that shape:
+In addition:
 
-- **No hot-path cost.** Nothing about evaluation changes for an expression
-  that does not invoke the operator.
-- **`Debug` on the store prints names with the values masked**, and the
-  store implements neither `Serialize` nor `Clone`. `Secrets::names` lists
-  the top-level keys, never a value.
-- **A layer reads the input without the secret.** `Ctx::input`, the config
-  resolved for a call as a logging or dry-run layer reads it, gives `null`
-  for every field whose expression reads a secret, and never evaluates it,
-  so not even its error can carry the value. The function's own
-  `Ctx::resolve` is the unredacted counterpart.
+- **Zero overhead when unused:** Expressions that do not call `secret` incur no
+  runtime cost.
+- **Redacted `Debug` output:** Formatting `Secrets` with `Debug` prints secret
+  names with their values masked, and `Secrets` intentionally does not implement
+  `Serialize` or `Clone`. `Secrets::names()` lists only top-level key names.
+- **Automatic redaction for `CallLayer`s:** When a logging or dry-run layer
+  calls `ctx.input()`, any field whose expression reads a secret is replaced
+  with `null` without being evaluated. Inside the host function itself,
+  `ctx.resolve(&cfg)` evaluates all fields including secrets.
 
-## What a secret may not do
+## Preventing Secret Leaks
 
-Placement does not stop a workflow *copying* a secret into a recorded root:
+Keeping secrets in a separate store wouldn't help if a workflow simply copied a
+secret into the message context:
 
 ```json
 { "path": "data.sig", "logic": { "secret": "partner_key" } }
 ```
 
-No principled static line separates a verbatim copy from a derived value
-(`cat`, `substr` and `if` all copy), so the rule is blunt. **An expression
-whose result the engine records may not read a secret at all.** That holds
-for a dynamic name (`{"secret": {"var": "…"}}`) as much as a literal one.
+Because JSONLogic operators like `cat`, `substr`, and `if` can copy or transform
+values in arbitrary ways, dataflow-rs enforces a strict compile-time rule:
+**any expression whose result is recorded by the engine is forbidden from
+reading a secret.** This applies to both literal secret names and dynamic names
+(`{"secret": {"var": "…"}}`).
 
-Every parameter is JSONLogic, so the rule covers destinations as well as
-values. A path is recorded in `Change.path` and on the audit trail, and both
-are serialized along with the value written there:
+This rule covers destination paths as well as values, since paths are recorded
+in `Change.path` and on the audit trail:
 
-| Parameter | Why it is recorded |
+| Parameter | Why Secret Reads Are Blocked |
 |---|---|
-| `map`: `logic` | The value written to the message |
-| `map`: `path` | The destination, recorded in `Change.path` and the audit trail |
-| `validation`: `message` | Rendered into `Message::errors`. A rule may *test* a secret in its `logic`; it may not *report* one |
-| `log`: `message`, `fields.*` | Emitted to the log |
-| `parse_*`: `source`, `target` | Name where the engine itself reads and writes |
-| `publish_*`: `source`, `target` | Same |
-| `publish_xml`: `root_element` | Written into the serialized document that lands in `data.{target}` |
-| Any `Output` of a host function's config | A destination, recorded in every `Change` written through it |
-| A host function's `#[config(records)]` field | The function declared that the engine records its result |
+| `map`: `logic` | The result is written directly into the message context. |
+| `map`: `path` | The destination path is recorded in `Change.path` and the audit trail. |
+| `validation`: `message` | Recorded in `Message::errors` (a rule may *test* a secret in `logic`, but may not *output* one in `message`). |
+| `log`: `message`, `fields.*` | Emitted to application logs. |
+| `parse_*` / `publish_*`: `source`, `target` | Determine paths read from and written to the message context. |
+| `publish_xml`: `root_element` | Written into the serialized XML stored at `data.{target}`. |
+| Any `Output` field of a host function | Recorded as the destination path in every `Change` emitted through it. |
+| Any `#[config(records)]` field of a host function | Explicitly marked by the function author as recorded in the message or logs. |
 
-Everything else handed to a *host function* may read a secret, because what
-happens to it from there is the function's business: every other field of
-its config, and any condition, which yields a boolean rather than a recorded
-value. An `Interpolated` document may not hold a `{"secret": …}` node at all
-(`SECRET_IN_DOCUMENT`): a document is never evaluated, so the secret would
-be handed on as written.
+All other expressions—including conditions (which only produce booleans) and
+regular `Expr<T>` fields on custom host functions—are allowed to read secrets.
+Note that `Interpolated` documents cannot contain `{"secret": …}` nodes at all
+(`SECRET_IN_DOCUMENT`), because only `var` placeholders are substituted in
+interpolated documents.
 
-The check runs at authoring time and at build, from one implementation:
+The compiler checks secret usage at both authoring time and build time:
 
-| Code | Fires when |
+| Issue Code | When It Is Reported |
 |---|---|
-| `SECRET_IN_MESSAGE_WRITE` | Any recorded parameter above reads a secret |
-| `UNKNOWN_SECRET` | An expression names, literally, a secret the engine does not declare |
+| `SECRET_IN_MESSAGE_WRITE` | Any recorded expression listed above reads from `{"secret": …}`. |
+| `UNKNOWN_SECRET` | An expression references a literal secret name that is not present in the `Secrets` store. |
 
-Both are Rejected: `Engine::builder().build()` refuses a workflow with
-either, and `Compiler::check` reports them at the authored path:
+Both issues have `Rejected` severity: `Engine::builder().build()` refuses to
+build the workflow, and `Compiler::check` reports the exact authored path:
 
 ```rust
 use dataflow_rs::datavalue::OwnedDataValue;
@@ -192,8 +188,10 @@ assert_eq!(issues[0].code, IssueCode::UnknownSecret);
 assert_eq!(issues[0].path.to_string(), "condition");
 ```
 
-Derived values (an HMAC over the body, a signed URL) belong in a host
-function, which reads the key through an `Expr` and writes only the result:
+When you need to compute a value derived from a secret (such as an HMAC
+signature or a signed URL) and write it to the message, implement that operation
+in a custom host function. The host function can evaluate the secret via an
+`Expr` field and write only the non-sensitive result to the message:
 
 ```rust
 # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
@@ -205,8 +203,8 @@ use serde_json::json;
 
 #[derive(FunctionConfig)]
 struct SignConfig {
-    key: Expr<String>,     // {"secret": "partner.hmac"} in the workflow
-    body: Expr<String>,    // {"var": "data.body"}
+    key: Expr<String>,     // Configured as {"secret": "partner.hmac"} in the workflow
+    body: Expr<String>,    // Configured as {"var": "data.body"}
     #[output(default = "data.signature")]
     output: Output,
 }
@@ -219,10 +217,10 @@ impl Function for Sign {
     async fn call(&self, ctx: &mut Ctx<'_>, cfg: &SignConfig) -> Result<Outcome> {
         let key = ctx.eval(&cfg.key)?;
         let body = ctx.eval(&cfg.body)?;
-        // What a layer would see: the secret-reading field is `null`.
+        // Layers calling `ctx.input()` see `null` for the secret-reading field:
         assert_eq!(ctx.input()?.get("key"), Some(&OwnedDataValue::Null));
         let signature = hmac_hex(&key, &body);
-        ctx.emit(&cfg.output, OwnedDataValue::from(&json!(signature)))?;   // derived, not the key
+        ctx.emit(&cfg.output, OwnedDataValue::from(&json!(signature)))?;   // Writes the signature, never the key
         Ok(Outcome::Ok)
     }
 }
@@ -243,37 +241,34 @@ assert_eq!(called.message.to_json()["context"]["data"]["signature"], json!("5:9"
 # });
 ```
 
-The contract for a function author is one line: **a function must not write
-a secret-derived value into the message.** The engine cannot see past the
-function boundary; whether `key` stays unrecorded from here is the function's
-business.
+## Handling Unknown Secret Names
 
-## Unknown names
+- **Literal secret names** that do not exist in the `Secrets` store are rejected
+  at compile time with `UNKNOWN_SECRET`, catching typos before any messages run.
+- **Dynamic secret names** (such as `{"secret": {"var": "data.key_name"}}`) that
+  fail to resolve at runtime produce an evaluation error: conditions evaluate to
+  `false`, `validation` rules record an error, and `ctx.eval` in a host function
+  returns `Err`. Missing secrets never silently resolve to `null`.
 
-The compiler rejects any literal secret name that is missing from the store at
-build time (`UNKNOWN_SECRET`), catching typos before any message runs. A
-dynamic secret name that fails to resolve produces an evaluation error:
-conditions evaluate to `false`, `validation` rules record an error, and
-`Ctx::eval` in a host function returns `Err`. Missing secrets never resolve to
-`null`.
-
-Error messages include only the secret key name, never its value.
+Error messages only ever include the secret's key name, never its value.
 
 ## Boundaries and Limitations
 
-- **Static checks only.** The compiler blocks secret reads in expressions that
-  the engine records directly. Host functions must still avoid writing
-  secret-derived values into the message.
-- **Other operators' error messages.** Some `datalogic-rs` operators (such as
-  `datetime`) include operand values when formatting evaluation errors. Do not
-  pass secrets into operators that echo their inputs on failure.
-- **In-process memory is trusted.** The evaluator copies resolved secrets into
-  its arena during evaluation and does not zeroize arena memory afterward.
-- **One store per `ExprEngine`.** Every workflow compiled from a `Registry`
-  shares its `ExprEngine` and secret store, including across reloads via
-  `engine.compiler()`. To rotate secrets, build a new `ExprEngine` and
-  `Registry` and recompile the definitions.
-- **`secret` is a reserved operator name.** `ExprEngineBuilder::build` rejects
-  custom operators named `secret`. `ExprEngine::operators` lists `secret` on
-  every engine, so `{"secret": "x"}` on an engine without a configured store
-  returns an evaluation error rather than passing through as literal data.
+- **Host function responsibility:** The compiler prevents workflows from writing
+  secrets directly into recorded fields, but it cannot inspect Rust code inside
+  custom host functions. Ensure your host functions never write raw secrets into
+  the message context or error messages.
+- **Operator error formatting:** Some extended `datalogic-rs` operators (such as
+  `datetime`) include invalid operand values in their error messages when
+  parsing fails. Avoid passing secrets into operators that echo their inputs on
+  failure.
+- **In-process memory:** Resolved secrets are copied into the evaluation arena
+  during expression evaluation and are not zeroized afterward.
+- **Secret rotation:** Every workflow compiled by a `Registry` shares its
+  `ExprEngine` and `Secrets` store (including across reloads via
+  `engine.compiler()`). To rotate secrets, construct a new `ExprEngine` and
+  `Registry` and recompile your workflows.
+- **Reserved operator name:** `secret` is a reserved operator name on every
+  `ExprEngine`. Calling `{"secret": "x"}` on an engine without a configured
+  `Secrets` store returns an evaluation error rather than passing through as a
+  literal JSON object.
