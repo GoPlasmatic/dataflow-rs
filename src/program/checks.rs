@@ -323,8 +323,7 @@ fn walk_duplicates(
 /// failure: it is present and did not constant-fold to `true` during the
 /// compile walk.
 fn gates(trivial_conds: &HashSet<AuthoredPath>, has_cond: bool, step_path: &AuthoredPath) -> bool {
-    has_cond
-        && (trivial_conds.is_empty() || !trivial_conds.contains(&step_path.join("condition")))
+    has_cond && (trivial_conds.is_empty() || !trivial_conds.contains(&step_path.join("condition")))
 }
 
 /// `UNGUARDED_VALIDATION`: a `validation` task whose rejection nothing after

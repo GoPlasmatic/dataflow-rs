@@ -211,7 +211,7 @@ impl<'a> TaskBudget<'a> {
         if let Some(limit) = self.max_tasks {
             let admitted =
                 self.tasks_used
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+                    .try_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                         (used < limit).then_some(used + 1)
                     });
             if admitted.is_err() {
