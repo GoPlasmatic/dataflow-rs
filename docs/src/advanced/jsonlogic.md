@@ -351,7 +351,7 @@ To use tensor operators, enable the `tensor` Cargo feature and add
 
 ```toml
 [dependencies]
-dataflow-rs = { version = "4.0", features = ["tensor"] }
+dataflow-rs = { version = "4.1", features = ["tensor"] }
 ```
 
 When `Tensor` is enabled, prefix literal single-key objects with `$` (for

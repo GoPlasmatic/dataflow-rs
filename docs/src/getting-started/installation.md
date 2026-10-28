@@ -11,7 +11,7 @@ Add `dataflow-rs` to your Rust project using Cargo.
 
 ```toml
 [dependencies]
-dataflow-rs = "4.0"
+dataflow-rs = "4.1"
 serde_json = "1.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 ```
@@ -33,7 +33,7 @@ By default, optional Cargo features are disabled and `ExprEngine::default()` ena
 
 ```toml
 [dependencies]
-dataflow-rs = { version = "4.0", features = ["datetime", "budget"] }
+dataflow-rs = { version = "4.1", features = ["datetime", "budget"] }
 ```
 
 > **Note:** Enabling an operator family changes how single-key JSON objects with matching keys are evaluated. When a family is disabled, its operator names are treated as literal object keys (for example, `{"length": ...}` produces a literal object until `OperatorFamily::ExtString` is enabled, after which `length` is evaluated as an operator). You can always prefix a key with `$` (for example, `{"$length": ...}`) to force a literal object. See [JSONLogic → Operator Families](../advanced/jsonlogic.md#operator-families) for details.

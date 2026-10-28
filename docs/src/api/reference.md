@@ -395,5 +395,5 @@ No Cargo features are enabled by default.
 
 ```toml
 [dependencies]
-dataflow-rs = { version = "4.0", features = ["datetime", "budget"] }
+dataflow-rs = { version = "4.1", features = ["datetime", "budget"] }
 ```
