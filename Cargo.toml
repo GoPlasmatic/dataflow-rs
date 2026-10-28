@@ -87,7 +87,7 @@ bumpalo = "3.20"
 self_cell = "1.3"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 dataflow-rs-derive = { workspace = true }
-uuid = { version = "1.28", default-features = false, features = ["v7", "std"] }
+uuid = { version = "1.29", default-features = false, features = ["v7", "std"] }
 # The `log` built-in's target, and `map`'s failing-mapping lines.
 log = "0.4"
 # `parse_xml` and `publish_xml`, at v3's requirement.
@@ -101,7 +101,7 @@ ts-rs = { version = "12.0.1", optional = true, features = ["no-serde-warnings"] 
 
 # Native-only: a thread-local PRNG instead of one `getrandom` per id, as v3 does.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-uuid = { version = "1.28", default-features = false, features = ["fast-rng"] }
+uuid = { version = "1.29", default-features = false, features = ["fast-rng"] }
 # Native-only: a host call's race against the run's deadline and token,
 # with the timer, the token's `Notify` and `select!`. On wasm only the checks run.
 tokio = { version = "1", default-features = false, features = ["rt", "time", "sync", "macros"] }
@@ -133,13 +133,13 @@ members = [".", "wasm", "docs-tests", "corpus", "derive"]
 # A release bumps this line and `ui/package.json`'s version, by hand nowhere
 # else.
 [workspace.package]
-version = "4.0.2"
+version = "4.0.3"
 
 # The two crates.io artifacts, at the engine's version. The root and the wasm
 # crate name them through these entries, so the exact pin lives here once.
 [workspace.dependencies]
-dataflow-rs = { path = ".", version = "=4.0.2" }
-dataflow-rs-derive = { path = "derive", version = "=4.0.2" }
+dataflow-rs = { path = ".", version = "=4.0.3" }
+dataflow-rs-derive = { path = "derive", version = "=4.0.3" }
 
 # Lint policy lives here rather than only in the CI command line, so a local
 # `cargo clippy` and rust-analyzer enforce exactly what CI does. CI still passes

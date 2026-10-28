@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.3] — 2026-10-28
+
+### Changed
+
+- Updated `uuid` to 1.29, and refreshed the lockfile with `tokio` 1.54.1,
+  `cc` 1.10.0, `find-msvc-tools` 0.1.15 and `smallvec` 1.16.4.
+
 ## [4.0.2] — 2026-10-28
 
 ### Added
