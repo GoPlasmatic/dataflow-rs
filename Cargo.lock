@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "dataflow-rs"
-version = "4.1.0"
+version = "4.0.2"
 dependencies = [
  "bumpalo",
  "chrono",
@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "dataflow-rs-derive"
-version = "4.1.0"
+version = "4.0.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -256,7 +256,7 @@ dependencies = [
 
 [[package]]
 name = "dataflow-wasm"
-version = "4.1.0"
+version = "4.0.2"
 dependencies = [
  "console_error_panic_hook",
  "dataflow-rs",

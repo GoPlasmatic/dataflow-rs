@@ -77,7 +77,7 @@ Dynamic business rules and user-customizable workflows outgrow hardcoded `if/els
 
 ```toml
 [dependencies]
-dataflow-rs = "4.1"
+dataflow-rs = "4.0"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde_json = "1.0"
 ```
