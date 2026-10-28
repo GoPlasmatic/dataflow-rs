@@ -221,6 +221,12 @@ pub trait FunctionConfig: Sized + Send + Sync + 'static {
     /// field marked `#[output(primary)]`, or the only output when there is
     /// one (`None` for an `Option<Output>` the input did not set). A
     /// hand-written config has none unless it says so.
+    ///
+    /// It must lend the config's own field, the one [`resolve`](Self::resolve)
+    /// resolves: [`Ctx::input_with_primary_output`](crate::Ctx::input_with_primary_output)
+    /// and [`Ctx::input_without_primary_output`](crate::Ctx::input_without_primary_output)
+    /// find that field by this reference, so a copy made here would leave the
+    /// output to resolve as usual.
     fn primary_output(&self) -> Option<&Output> {
         None
     }

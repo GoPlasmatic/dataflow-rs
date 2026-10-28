@@ -9,8 +9,8 @@ use crate::base::{
 use crate::expr::arena::with_arena;
 use crate::expr::path;
 use crate::expr::{
-    CRATE, Expr, ExprEngine, ExprVisitor, Filled, FromValue, Interpolated, Output, Path, Rendered,
-    ResolveExpr, Resolver, SealedResolver, Seg, reads_secret,
+    CRATE, Expr, ExprEngine, ExprVisitor, Filled, FromValue, Interpolated, Output, OutputOverride,
+    Path, Rendered, ResolveExpr, Resolver, SealedResolver, Seg, reads_secret,
 };
 use crate::run::{RunAccountant, TaskBudget};
 use crate::state::{Lookup, Reader, splice};
@@ -282,8 +282,124 @@ impl<'r> Ctx<'r> {
     /// operation ceiling is exceeded, [`ErrorKind::Eval`] for any other
     /// evaluation failure, [`ErrorKind::Config`] for a serde field that does
     /// not serialize.
+    ///
+    /// [`Self::input_without_primary_output`] and
+    /// [`Self::input_with_primary_output`] are this resolution with the
+    /// callee's primary output left out, or set to a path the caller resolved
+    /// itself, so a layer that owns the destination policy need not evaluate
+    /// it.
     pub fn input(&self) -> Result<OwnedDataValue> {
-        let mut input = self.callee.resolve(&mut Redacted(self))?;
+        self.input_with(None)
+    }
+
+    /// [`Self::input`] with the callee's primary output left out, as an
+    /// optional output the input left unset is. A config with no primary
+    /// output, or one left unset, resolves as [`Self::input`] does.
+    ///
+    /// The output's expression is never evaluated, so a computed
+    /// destination that yields `null` does not fail the rest of the input.
+    /// Every other field is resolved and redacted as [`Self::input`]
+    /// resolves it.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::input`]'s, for every field but the primary output.
+    pub fn input_without_primary_output(&self) -> Result<OwnedDataValue> {
+        self.input_with(self.primary_output().map(|out| (out, Supplied::Omit)))
+    }
+
+    /// [`Self::input`] with the callee's primary output set to `path`, its
+    /// expression never evaluated. The field is the path's dotted text, as
+    /// [`Self::input`] writes it when the expression resolves.
+    ///
+    /// A layer that resolved the destination with a policy of its own, such
+    /// as a computed `null` falling back to `data`, reads the input here and
+    /// then writes the answer through the same path, without resolving the
+    /// output a second time.
+    ///
+    /// The secret redaction [`Self::input`] applies still applies: a field
+    /// that reads a secret is `null`, and the output is `null` too when its
+    /// expression reads one, since a destination derived from a secret is
+    /// never written to an input.
+    ///
+    /// # Errors
+    ///
+    /// [`Self::input`]'s, for every field but the primary output;
+    /// [`ErrorKind::Config`] when the callee has no primary output, or leaves
+    /// an optional one unset, which the error names.
+    ///
+    /// ```
+    /// # tokio::runtime::Builder::new_current_thread().build().unwrap().block_on(async {
+    /// use dataflow_rs::datavalue::OwnedDataValue;
+    /// use dataflow_rs::expr::Output;
+    /// use dataflow_rs::function::{BoxFuture, CallLayer, FunctionConfig, Next, testing};
+    /// use dataflow_rs::{Ctx, Expr, Function, Message, Outcome, Result};
+    /// use serde_json::json;
+    ///
+    /// #[derive(FunctionConfig)]
+    /// struct Fetch {
+    ///     url: Expr<String>,
+    ///     output: Output,
+    /// }
+    ///
+    /// struct FetchFn;
+    ///
+    /// impl Function for FetchFn {
+    ///     type Config = Fetch;
+    ///
+    ///     async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &Fetch) -> Result<Outcome> {
+    ///         Ok(Outcome::Ok)
+    ///     }
+    /// }
+    ///
+    /// /// Resolves the destination with a policy of its own, then logs the
+    /// /// redacted input with that destination.
+    /// struct Log;
+    ///
+    /// impl CallLayer for Log {
+    ///     fn call<'a>(
+    ///         &'a self,
+    ///         ctx: &'a mut Ctx<'_>,
+    ///         next: Next<'a>,
+    ///     ) -> BoxFuture<'a, Result<Outcome>> {
+    ///         Box::pin(async move {
+    ///             let Some(out) = ctx.primary_output() else {
+    ///                 return next.run(ctx).await;
+    ///             };
+    ///             let path = ctx.eval(out.path())?.into_owned();
+    ///             let input = ctx.input_with_primary_output(&path)?;
+    ///             assert_eq!(
+    ///                 input.to_json_string(),
+    ///                 r#"{"url":"https://x","output":"data.response"}"#
+    ///             );
+    ///             next.run(ctx).await
+    ///         })
+    ///     }
+    /// }
+    ///
+    /// let called = testing::call(
+    ///     FetchFn,
+    ///     json!({"url": "https://x", "output": {"var": "data.where"}}),
+    /// )
+    /// .message(Message::from_parts(
+    ///     OwnedDataValue::Null,
+    ///     OwnedDataValue::from(&json!({"where": "data.response"})),
+    ///     OwnedDataValue::Null,
+    /// ))
+    /// .layer(Log)
+    /// .await;
+    /// assert!(called.outcome.is_ok());
+    /// # });
+    /// ```
+    pub fn input_with_primary_output(&self, path: &Path) -> Result<OwnedDataValue> {
+        let out = self.require_primary()?;
+        self.input_with(Some((out, Supplied::At(path))))
+    }
+
+    /// [`Self::input`] with `primary` supplying the callee's primary output.
+    fn input_with(&self, primary: Option<(&'r Output, Supplied<'_>)>) -> Result<OwnedDataValue> {
+        let mut resolver = Redacted { ctx: self, primary };
+        let mut input = self.callee.resolve(&mut resolver)?;
         // The walk the secret checks trust: whatever a field's resolve did,
         // the value where its secret-reading expression sits is `null`.
         self.callee.visit(&mut Redact(&mut input));
@@ -549,10 +665,16 @@ impl<'r> Ctx<'r> {
     /// [`ErrorKind::Config`] when the config has no primary output, or
     /// leaves an optional one unset, which the error names; [`Self::emit`]'s.
     pub fn emit_default(&mut self, value: OwnedDataValue) -> Result<()> {
+        let out = self.require_primary()?;
+        self.emit(out, value)
+    }
+
+    /// The callee's primary output, or the `Config` error `emit_default`
+    /// gives when the config has none, or leaves an optional one unset.
+    fn require_primary(&self) -> Result<&'r Output> {
         let function = self.start.info.function;
-        let callee = self.callee;
-        match callee.primary() {
-            Primary::Set(out) => self.emit(out, value),
+        match self.callee.primary() {
+            Primary::Set(out) => Ok(out),
             Primary::Unset(field) => Err(Error::new(
                 ErrorKind::Config,
                 format!("`{function}`'s primary output `{field}` is not set"),
@@ -615,23 +737,49 @@ impl Resolver for &Ctx<'_> {
     }
 }
 
-/// The resolver behind [`Ctx::input`]: an expression that reads a secret
-/// is `null`, and is never evaluated; anything else as the call's context
-/// resolves it.
-struct Redacted<'c, 'r>(&'c Ctx<'r>);
+/// How a call's input resolves the callee's primary output, when the caller
+/// supplied it.
+#[derive(Clone, Copy)]
+enum Supplied<'p> {
+    /// Leave the field out.
+    Omit,
+    /// Resolve it to this path, its expression never evaluated.
+    At(&'p Path),
+}
 
-impl SealedResolver for Redacted<'_, '_> {}
+/// The resolver behind [`Ctx::input`]: an expression that reads a secret is
+/// `null`, and is never evaluated; anything else as the call's context
+/// resolves it, and the callee's primary output as the caller supplied it.
+struct Redacted<'c, 'r, 'p> {
+    ctx: &'c Ctx<'r>,
+    /// The callee's primary output and what to resolve it to, when the
+    /// caller supplied it.
+    primary: Option<(&'r Output, Supplied<'p>)>,
+}
 
-impl Resolver for Redacted<'_, '_> {
+impl SealedResolver for Redacted<'_, '_, '_> {}
+
+impl Resolver for Redacted<'_, '_, '_> {
     fn eval(&mut self, expr: &dyn ResolveExpr) -> Result<OwnedDataValue> {
         if reads_secret(expr.raw()) {
             return Ok(OwnedDataValue::Null);
         }
-        self.0.eval_owned(expr)
+        self.ctx.eval_owned(expr)
     }
 
     fn render(&mut self, doc: &Interpolated) -> Result<OwnedDataValue> {
-        Ok(self.0.render(doc).to_owned())
+        Ok(self.ctx.render(doc).to_owned())
+    }
+
+    fn output_override(&mut self, out: &Output) -> Option<OutputOverride> {
+        let (primary, supplied) = self.primary?;
+        if !std::ptr::eq(out, primary) {
+            return None;
+        }
+        Some(match supplied {
+            Supplied::Omit => OutputOverride::Omit,
+            Supplied::At(path) => OutputOverride::Value(OwnedDataValue::String(path.to_string())),
+        })
     }
 }
 
@@ -729,11 +877,41 @@ pub(crate) mod testing {
             &NoCallee,
         ))
     }
+
+    /// Runs `f` with a call context over `context` and `callee`, the call
+    /// described by `info`, as a registry binds one.
+    pub(crate) fn with_call<R>(
+        context: &serde_json::Value,
+        info: CallInfo<'_>,
+        callee: &dyn BoundCall,
+        f: impl FnOnce(Ctx<'_>) -> R,
+    ) -> R {
+        let exprs = ExprEngine::default();
+        let budget = TaskBudget::unlimited();
+        let payload = OwnedDataValue::Null;
+        let mut slot = OwnedDataValue::from(context);
+        let mut rc = RunContext::new(&mut slot, Tuning::default());
+        let reader = rc.reader();
+        f(Ctx::new(
+            CallStart {
+                reader,
+                binding: None,
+                payload: &payload,
+                exprs: &exprs,
+                budget: &budget,
+                info,
+                deadline: None,
+                cancel: None,
+                capture: true,
+            },
+            callee,
+        ))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::testing::{NoCallee, with_ctx};
+    use super::testing::{NoCallee, with_call, with_ctx};
     use super::*;
     use crate::state::{RunContext, Tuning};
     use serde_json::{Value, json};
@@ -1316,6 +1494,104 @@ mod tests {
             assert!(text.contains("task_id: \"t\"") && text.contains("overlay_empty: true"));
             assert!(!text.contains("secret_looking"), "{text}");
             assert!(text.ends_with(".. }"), "{text}");
+        });
+    }
+
+    /// A callee with one primary output and a fixed field, resolving the
+    /// output through the config's own `Output`, as a derived config does.
+    struct Computed {
+        output: Output,
+    }
+
+    impl Computed {
+        fn new(raw: Value) -> Self {
+            let engine = ExprEngine::default();
+            let mut issues = Vec::new();
+            let mut cx = crate::expr::CompileCx::new(&engine, &mut issues);
+            let output = <Output as crate::expr::ConfigField>::compile(&raw, &mut cx)
+                .expect("the output compiles");
+            drop(cx);
+            assert!(issues.is_empty(), "{issues:?}");
+            Self { output }
+        }
+    }
+
+    impl BoundCall for Computed {
+        fn call<'a>(
+            &'a self,
+            _ctx: &'a mut Ctx<'_>,
+        ) -> crate::function::BoxFuture<'a, Result<crate::function::Outcome>> {
+            Box::pin(std::future::ready(Ok(crate::function::Outcome::Ok)))
+        }
+
+        fn visit(&self, v: &mut dyn ExprVisitor) {
+            v.expr(&"out".parse().unwrap(), self.output.path().raw(), true);
+        }
+
+        fn primary(&self) -> Primary<'_> {
+            Primary::Set(&self.output)
+        }
+
+        fn resolve(&self, r: &mut dyn Resolver) -> Result<OwnedDataValue> {
+            let mut entries = Vec::new();
+            if let Some(value) = crate::expr::ConfigField::resolve(&self.output, r)? {
+                entries.push(("out".to_owned(), value));
+            }
+            entries.push(("kept".to_owned(), OwnedDataValue::from(7)));
+            Ok(OwnedDataValue::Object(entries))
+        }
+    }
+
+    #[test]
+    fn an_input_can_skip_or_supply_the_primary_output() {
+        let callee = Computed::new(json!({"var": "data.missing"}));
+        let context = json!({"data": {"k": 1}, "metadata": {}, "temp_data": {}});
+        with_call(&context, info(), &callee, |ctx| {
+            // Strict by default: a computed `null` is not a path.
+            assert!(ctx.input().is_err());
+            assert_eq!(
+                ctx.input_without_primary_output().unwrap().to_json_string(),
+                r#"{"kept":7}"#
+            );
+            assert_eq!(
+                ctx.input_with_primary_output(&parse("data.fallback"))
+                    .unwrap()
+                    .to_json_string(),
+                r#"{"out":"data.fallback","kept":7}"#
+            );
+        });
+    }
+
+    #[test]
+    fn a_valid_computed_output_resolves_as_usual_and_can_be_supplied() {
+        let callee = Computed::new(json!({"var": "data.where"}));
+        let context = json!({"data": {"where": "data.answer"}, "metadata": {}, "temp_data": {}});
+        with_call(&context, info(), &callee, |ctx| {
+            assert_eq!(
+                ctx.input().unwrap().to_json_string(),
+                r#"{"out":"data.answer","kept":7}"#
+            );
+            assert_eq!(
+                ctx.input_with_primary_output(&parse("data.other"))
+                    .unwrap()
+                    .to_json_string(),
+                r#"{"out":"data.other","kept":7}"#
+            );
+        });
+    }
+
+    #[test]
+    fn supplying_a_primary_output_a_config_lacks_is_a_config_error() {
+        let context = json!({"data": {}, "metadata": {}, "temp_data": {}});
+        with_ctx(&context, info(), None, |ctx| {
+            let error = ctx.input_with_primary_output(&parse("data.x")).unwrap_err();
+            assert_eq!(error.kind(), &ErrorKind::Config);
+            assert!(error.message().contains("has no primary output"), "{error}");
+            // Nothing to leave out: the omit form is `input`.
+            assert_eq!(
+                ctx.input_without_primary_output().unwrap(),
+                OwnedDataValue::Null
+            );
         });
     }
 }

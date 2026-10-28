@@ -94,6 +94,28 @@ impl Context {
     pub fn as_value(&self) -> &OwnedDataValue {
         &self.root
     }
+
+    /// Takes the `data` root, leaving an empty object where it was so the
+    /// context keeps its three roots and still serializes as one. `metadata`
+    /// and `temp_data` are untouched.
+    ///
+    /// The tree is moved, not cloned: its buffers, key order and numeric
+    /// representation are the ones it had, so a completed child run's result
+    /// can cross into its parent without a deep copy. A second take returns
+    /// the empty object the first left.
+    ///
+    /// A root that is not an object (a trace's redacted `null`) is returned
+    /// as it is and replaced with `{}`, as every root starts as an object.
+    #[must_use = "the data root is taken and left empty"]
+    pub fn take_data(&mut self) -> OwnedDataValue {
+        let OwnedDataValue::Object(entries) = &mut self.root else {
+            return OwnedDataValue::Object(Vec::new());
+        };
+        let Some((_, data)) = entries.iter_mut().find(|(key, _)| key.as_str() == "data") else {
+            return OwnedDataValue::Object(Vec::new());
+        };
+        std::mem::replace(data, OwnedDataValue::Object(Vec::new()))
+    }
 }
 
 impl Serialize for Context {
@@ -413,5 +435,73 @@ mod tests {
         // Nothing repeated, nothing moves.
         let plain = r#"{"b":1,"a":{"b":2},"c":[{"b":3}]}"#;
         assert_eq!(fold(plain), plain);
+    }
+
+    /// The buffer of `value`'s `a.b` array, when it has one.
+    fn array_buffer(value: &OwnedDataValue) -> *const OwnedDataValue {
+        let OwnedDataValue::Object(entries) = value else {
+            return std::ptr::null();
+        };
+        let Some((_, OwnedDataValue::Object(inner))) = entries.iter().find(|(key, _)| key == "a")
+        else {
+            return std::ptr::null();
+        };
+        let Some((_, OwnedDataValue::Array(items))) = inner.iter().find(|(key, _)| key == "b")
+        else {
+            return std::ptr::null();
+        };
+        items.as_ptr()
+    }
+
+    #[test]
+    fn taking_the_data_root_moves_the_tree_and_leaves_an_object() {
+        let data = json!({"a": {"b": [1, {"c": 2.0}]}, "big": 12345678901234i64});
+        let mut c = Context::from_root(OwnedDataValue::from(&json!({
+            "data": data, "metadata": {"m": 1}, "temp_data": {"t": true}
+        })));
+        let buffer = array_buffer(c.data());
+        assert!(!buffer.is_null());
+        let taken = c.take_data();
+        // The value is the one that was there, its buffer included: the tree
+        // moved, and nothing was copied.
+        assert_eq!(taken, OwnedDataValue::from(&data));
+        assert_eq!(array_buffer(&taken), buffer);
+        assert_eq!(
+            serde_json::to_string(&taken).unwrap(),
+            r#"{"a":{"b":[1,{"c":2.0}]},"big":12345678901234}"#
+        );
+        // The context keeps its three roots, `data` as an object, and the
+        // other two as they were.
+        assert_eq!(
+            text(&c),
+            r#"{"data":{},"metadata":{"m":1},"temp_data":{"t":true}}"#
+        );
+    }
+
+    #[test]
+    fn a_second_take_returns_the_empty_object_the_first_left() {
+        let mut c = Context::new(
+            OwnedDataValue::from(&json!({"a": 1})),
+            OwnedDataValue::from(&json!({"m": 1})),
+        );
+        assert_eq!(c.take_data(), OwnedDataValue::from(&json!({"a": 1})));
+        assert_eq!(c.take_data(), OwnedDataValue::Object(Vec::new()));
+        assert_eq!(text(&c), r#"{"data":{},"metadata":{"m":1},"temp_data":{}}"#);
+    }
+
+    #[test]
+    fn an_empty_data_root_is_taken_as_an_empty_object() {
+        let mut c = Context::new(OwnedDataValue::Object(Vec::new()), OwnedDataValue::Null);
+        assert_eq!(c.take_data(), OwnedDataValue::Object(Vec::new()));
+        assert_eq!(text(&c), r#"{"data":{},"metadata":{},"temp_data":{}}"#);
+    }
+
+    #[test]
+    fn a_redacted_root_is_taken_as_it_is_and_replaced_with_an_object() {
+        let mut c = Context::from_root(OwnedDataValue::from(&json!({
+            "data": null, "metadata": null, "temp_data": null
+        })));
+        assert_eq!(c.take_data(), OwnedDataValue::Null);
+        assert_eq!(text(&c), r#"{"data":{},"metadata":null,"temp_data":null}"#);
     }
 }

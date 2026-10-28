@@ -52,22 +52,22 @@ pub struct Templated {
 
 impl TemplatedField {
     /// The field's value through `r`, as the derive's field of the same kind
-    /// resolves: through that kind's [`ConfigField::resolve`].
-    fn resolve(&self, r: &mut dyn Resolver) -> Result<OwnedDataValue> {
-        let value = match self {
-            Self::Expr(expr) => expr.resolve(r)?,
-            Self::Path(expr) => expr.resolve(r)?,
-            Self::Interpolated(doc) => doc.resolve(r)?,
-            Self::Literal(value) => value.resolve(r)?,
-            Self::Output(out) => out.resolve(r)?,
-        };
-        // Every kind a runtime field compiles to is set once compiled.
-        Ok(value.unwrap_or(OwnedDataValue::Null))
+    /// resolves: through that kind's [`ConfigField::resolve`]. `None` when
+    /// the resolver leaves the field out, as a supplied primary output may.
+    fn resolve(&self, r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+        match self {
+            Self::Expr(expr) => expr.resolve(r),
+            Self::Path(expr) => expr.resolve(r),
+            Self::Interpolated(doc) => doc.resolve(r),
+            Self::Literal(value) => value.resolve(r),
+            Self::Output(out) => out.resolve(r),
+        }
     }
 
     /// The field's value for one call: a literal and a folded constant lent
     /// from the config, anything else resolved, as [`Self::resolve`] gives
-    /// it, owned.
+    /// it, owned. A field the resolver leaves out reads `null`, as
+    /// [`Templated::get`] has no absence to give.
     fn lend<'s>(&'s self, ctx: &Ctx<'_>) -> Result<Cow<'s, OwnedDataValue>> {
         match self {
             Self::Literal(value) => return Ok(Cow::Borrowed(value)),
@@ -78,7 +78,8 @@ impl TemplatedField {
             }
             _ => {}
         }
-        self.resolve(&mut &*ctx).map(Cow::Owned)
+        self.resolve(&mut &*ctx)
+            .map(|value| Cow::Owned(value.unwrap_or(OwnedDataValue::Null)))
     }
 }
 
@@ -294,13 +295,15 @@ impl Templated {
 
     /// Every field with a value, through `r`, as an object in declaration
     /// order: [`FunctionConfig::resolve`], which a derived config with the
-    /// same fields gives alike.
+    /// same fields gives alike. A field the resolver leaves out is absent,
+    /// as an optional field left unset is.
     fn resolve_fields(&self, r: &mut dyn Resolver) -> Result<OwnedDataValue> {
-        let entries = self
-            .fields
-            .iter()
-            .map(|field| Ok((field.name.to_string(), field.value.resolve(r)?)))
-            .collect::<Result<Vec<_>>>()?;
+        let mut entries = Vec::with_capacity(self.fields.len());
+        for field in &self.fields {
+            if let Some(value) = field.value.resolve(r)? {
+                entries.push((field.name.to_string(), value));
+            }
+        }
         Ok(OwnedDataValue::Object(entries))
     }
 

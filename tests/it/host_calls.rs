@@ -1782,3 +1782,279 @@ async fn an_input_over_the_budget_is_a_budget_error() {
     );
     assert_eq!(*seen.lock().unwrap(), [Some(ErrorKind::Budget)]);
 }
+
+/// Resolves a call's destination with a host policy — a computed `null`
+/// falls back to `data` — then logs the redacted input with the destination
+/// it resolved and answers through it, as Orion's offline stub does.
+struct HostPolicy(Arc<Mutex<Vec<String>>>);
+
+impl CallLayer for HostPolicy {
+    fn call<'a>(&'a self, ctx: &'a mut Ctx<'_>, next: Next<'a>) -> BoxFuture<'a, Result<Outcome>> {
+        Box::pin(async move {
+            let Some(out) = ctx.primary_output() else {
+                return next.run(ctx).await;
+            };
+            let output = match ctx.eval(out.path()) {
+                Ok(path) => path.into_owned(),
+                Err(_) => "data".parse().expect("`data` is a path"),
+            };
+            let input = ctx.input_with_primary_output(&output)?;
+            self.0.lock().unwrap().push(input.to_json_string());
+            ctx.set(&output, OwnedDataValue::from(&json!({"answer": 1})))?;
+            Ok(Outcome::Ok)
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_layer_resolves_a_computed_null_destination_and_reads_the_input() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let e = Engine::builder()
+        .register("one", Silent::<OneOutput>(PhantomData))
+        .layer(HostPolicy(Arc::clone(&seen)))
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![json!({"id": "t", "function": {"name": "one", "input": {
+                "out": {"var": "data.missing"}}}})],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({"kept": true}));
+    let run = e.run(&mut m).await;
+    assert!(
+        matches!(run.status(), RunStatus::Completed),
+        "{:?}",
+        run.status()
+    );
+    // The input resolves with the destination the layer chose, and the
+    // answer lands there; the function never ran.
+    assert_eq!(*seen.lock().unwrap(), [r#"{"out":"data"}"#.to_owned()]);
+    assert_eq!(data(&m), json!({"answer": 1}));
+}
+
+/// Logs the call's input without its primary output, then passes the call on.
+struct LogsWithoutOutput(Arc<Mutex<Vec<String>>>);
+
+impl CallLayer for LogsWithoutOutput {
+    fn call<'a>(&'a self, ctx: &'a mut Ctx<'_>, next: Next<'a>) -> BoxFuture<'a, Result<Outcome>> {
+        Box::pin(async move {
+            let input = ctx.input_without_primary_output()?;
+            self.0.lock().unwrap().push(input.to_json_string());
+            next.run(ctx).await
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_layer_omits_an_unresolvable_primary_output_and_the_call_runs() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let e = Engine::builder()
+        .register("one", Silent::<OneOutput>(PhantomData))
+        .layer(LogsWithoutOutput(Arc::clone(&seen)))
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![json!({"id": "t", "function": {"name": "one", "input": {
+                "out": {"var": "data.missing"}}}})],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({}));
+    let run = e.run(&mut m).await;
+    assert!(
+        matches!(run.status(), RunStatus::Completed),
+        "{:?}",
+        run.status()
+    );
+    assert_eq!(*seen.lock().unwrap(), ["{}".to_owned()]);
+}
+
+/// Supplies `data.answer` as the primary output, and logs what resolves.
+struct Supplies(Arc<Mutex<Vec<String>>>);
+
+impl CallLayer for Supplies {
+    fn call<'a>(&'a self, ctx: &'a mut Ctx<'_>, _next: Next<'a>) -> BoxFuture<'a, Result<Outcome>> {
+        Box::pin(async move {
+            let path: Path = "data.answer".parse().unwrap();
+            let input = ctx.input_with_primary_output(&path)?;
+            self.0.lock().unwrap().push(input.to_json_string());
+            ctx.set(&path, OwnedDataValue::from(&json!({"ok": true})))?;
+            Ok(Outcome::Ok)
+        })
+    }
+}
+
+#[tokio::test]
+async fn supplying_the_primary_output_leaves_the_other_outputs_strict() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let e = Engine::builder()
+        .register("two", Silent::<TwoOutputs>(PhantomData))
+        .layer(Supplies(Arc::clone(&seen)))
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![json!({"id": "t", "function": {"name": "two", "input": {
+                "main": {"var": "data.where"},
+                "side": {"var": "data.missing"}}}})],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({"where": "data.answer"}));
+    let run = e.run(&mut m).await;
+    // The primary is supplied; the secondary output still resolves, and its
+    // computed `null` still fails.
+    let RunStatus::Stopped(error) = run.status() else {
+        panic!("expected the secondary output to fail: {run:?}");
+    };
+    assert_eq!(error.kind(), &ErrorKind::Eval);
+    assert!(error.message().contains("data.missing"), "{error}");
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+/// A config with a secret-reading field and one primary output.
+#[derive(FunctionConfig)]
+struct SecretConfig {
+    token: Expr<String>,
+    out: Output,
+}
+
+#[tokio::test]
+async fn a_supplied_primary_output_keeps_the_rest_of_the_input_redacted() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let secrets =
+        Secrets::new(OwnedDataValue::from(&json!({"api": {"key": "s3cr3t"}}))).expect("an object");
+    let exprs = ExprEngine::builder()
+        .secrets(secrets)
+        .build()
+        .expect("the expression engine builds");
+    let e = Engine::builder()
+        .registry(Registry::new(exprs))
+        .register("secret", Silent::<SecretConfig>(PhantomData))
+        .layer(Supplies(Arc::clone(&seen)))
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![json!({"id": "t", "function": {"name": "secret", "input": {
+                "token": {"secret": "api.key"},
+                "out": {"var": "data.missing"}}}})],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({}));
+    let run = e.run(&mut m).await;
+    assert!(
+        matches!(run.status(), RunStatus::Completed),
+        "{:?}",
+        run.status()
+    );
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [r#"{"token":null,"out":"data.answer"}"#.to_owned()]
+    );
+    assert!(!m.to_json().to_string().contains("s3cr3t"));
+}
+
+#[tokio::test]
+async fn a_templated_config_supplies_its_primary_output() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let templates = Templates::default();
+    let e = Engine::builder()
+        .register("plugin", Plugin(Arc::clone(&templates)))
+        .layer(Supplies(Arc::clone(&seen)))
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![json!({"id": "t", "function": {"name": "plugin", "input": {
+                "expr": 1, "doc": "x", "lit": "l",
+                "out": {"var": "data.missing"}}}})],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({}));
+    let run = e.run(&mut m).await;
+    assert!(
+        matches!(run.status(), RunStatus::Completed),
+        "{:?}",
+        run.status()
+    );
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [r#"{"expr":1,"doc":"x","lit":"l","out":"data.answer"}"#.to_owned()]
+    );
+    // The layer answered, so the plugin never ran.
+    assert!(templates.lock().unwrap().is_empty());
+}
+
+/// A runtime-field function that does nothing: its config resolves, but its
+/// call does not read the fields itself.
+struct TplSilent;
+
+impl Function for TplSilent {
+    type Config = Templated;
+
+    fn spec(&self) -> FunctionSpec {
+        FunctionSpec::default().with_runtime_fields(vec![
+            FieldSpec::runtime("expr", FieldKind::Expr(ValueKind::Any), true),
+            FieldSpec::runtime("doc", FieldKind::Interpolated, true),
+            FieldSpec::runtime("lit", FieldKind::Literal(ValueKind::String), true),
+            FieldSpec::runtime("out", FieldKind::Output, true),
+        ])
+    }
+
+    async fn call(&self, _ctx: &mut Ctx<'_>, _cfg: &Templated) -> Result<Outcome> {
+        Ok(Outcome::Ok)
+    }
+}
+
+#[tokio::test]
+async fn a_templated_config_omits_its_primary_output() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let e = Engine::builder()
+        .register("tpl", TplSilent)
+        .layer(LogsWithoutOutput(Arc::clone(&seen)))
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![json!({"id": "t", "function": {"name": "tpl", "input": {
+                "expr": 1, "doc": "x", "lit": "l",
+                "out": {"var": "data.missing"}}}})],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({}));
+    let run = e.run(&mut m).await;
+    assert!(
+        matches!(run.status(), RunStatus::Completed),
+        "{:?}",
+        run.status()
+    );
+    // The omitted field is absent, as a derived config's would be, not null.
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [r#"{"expr":1,"doc":"x","lit":"l"}"#.to_owned()]
+    );
+}
+
+#[tokio::test]
+async fn supplying_a_primary_output_a_function_lacks_is_a_config_error() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let e = Engine::builder()
+        .register("none", Silent::<()>(PhantomData))
+        .layer(Supplies(Arc::clone(&seen)))
+        .workflow_json(&workflow(
+            "w",
+            &[],
+            vec![json!({"id": "t", "function": {"name": "none", "input": {}}})],
+        ))
+        .build()
+        .unwrap();
+    let mut m = message(json!({}));
+    let run = e.run(&mut m).await;
+    let RunStatus::Stopped(error) = run.status() else {
+        panic!("expected a config error: {run:?}");
+    };
+    assert_eq!(error.kind(), &ErrorKind::Config);
+    assert!(error.message().contains("has no primary output"), "{error}");
+    assert!(seen.lock().unwrap().is_empty());
+}

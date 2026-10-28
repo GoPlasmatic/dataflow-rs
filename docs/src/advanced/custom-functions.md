@@ -298,6 +298,8 @@ call returns `Ok`.
 | `ctx.secret(name)` | Looks up a secret value from the engine's secret store by dotted name. |
 | `ctx.info()` | Returns `CallInfo`: workflow and task IDs, registered function name, loop counter, fan-out element index, channel, and routing bucket. |
 | `ctx.input()` | Evaluates the entire config into an object while replacing secret-reading fields with `null` without evaluating them (intended for logging layers and dry runs). |
+| `ctx.input_without_primary_output()` | `ctx.input()` with the primary output field left out, so a layer can log the rest of the input even when a computed output yields `null`. |
+| `ctx.input_with_primary_output(&path)` | `ctx.input()` with the primary output field set to `path`, without evaluating its expression. For a layer that resolved the destination with its own policy. |
 | `ctx.resolve(&cfg)` | Evaluates the entire config into an object, including secrets (intended for the function's own use). |
 | `ctx.deadline()`, `ctx.cancel()` | Returns the run's deadline and cancellation token so you can forward them to child operations or sub-runs. |
 | `ctx.exprs()` | Returns the `ExprEngine` used to compile the program, allowing the function to compile ad-hoc expressions. |
@@ -576,6 +578,12 @@ Inside a layer, you can inspect `ctx.info()` and `ctx.input()`. Because
 logging layers cannot accidentally leak secrets. Layers can also write outputs
 using `ctx.emit` and `ctx.primary_output()` (the target path used by
 `ctx.emit_default`).
+
+When the layer owns the destination policy — for example a computed `null`
+destination falling back to `data` — resolve the destination itself, then read
+the input with `ctx.input_with_primary_output(&path)`, or leave the field out
+with `ctx.input_without_primary_output()`. Neither evaluates the output's
+expression a second time, and the rest of the input is still redacted.
 
 For dry runs and mocking, use the built-in `function::layers::Answer` layer. It
 passes each call's `Ctx` to a closure: when the closure returns `Some(value)`,

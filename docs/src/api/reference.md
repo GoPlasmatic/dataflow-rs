@@ -95,7 +95,7 @@ middleware layers, and function testing utilities.
 | `Function` | Trait for custom host functions: defines `type Config`, `spec()`, `prepare()`, and `async fn call()`. |
 | `FunctionConfig` (trait & derive) | Compiles a task's `input` JSON into a typed Rust struct once at build time. Supports `#[config(...)]` and `#[output(...)]` attributes. |
 | `FunctionSpec`, `RetrySafety`, `Reference` | Declares function metadata for catalogues and compilers: description, category, idempotency, external resource references, and runtime fields. |
-| `Ctx`, `CallInfo` | Per-call execution context (`get`, `set`, `remove`, `eval`, `render`, `emit`, `input`, `resolve`, `record_error`, `deadline`, `cancel`) and call metadata (`info()`). |
+| `Ctx`, `CallInfo` | Per-call execution context (`get`, `set`, `remove`, `eval`, `render`, `emit`, `input`, `input_without_primary_output`, `input_with_primary_output`, `resolve`, `record_error`, `deadline`, `cancel`) and call metadata (`info()`). |
 | `Outcome` | Execution outcome: `Ok` (`200`), `Status(u16)`, `Skip` (no audit entry), or `Halt` (`299`). |
 | `Prepare` | Compile-time context passed to `Function::prepare` (registered name, workflow ID, task ID, and `FunctionSpec`). |
 | `CallLayer`, `Next`, `BoxFuture` | Middleware trait for wrapping host function calls at registry or per-run scope. |
@@ -134,7 +134,7 @@ Executes compiled programs over messages.
 | `Run`, `RunStatus` | Execution report: `status()`, `workflows()`, `matched()`, `partial()`, `retryable()`, `trace()`, `take_trace()`, `into_result()`. Statuses: `Completed`, `CompletedWithErrors`, `Stopped(Error)`, `TimedOut`, `Cancelled`. |
 | `WorkflowRecord`, `Selection`, `WorkflowExit` | Per-workflow execution summary: selection outcome, loop sweep count, and exit reason. |
 | `Message` | `new`, `from_parts`, `from_json`; accessors `payload()`, `context()`, `context_mut()`, `audit()`, `errors()`; serializes as `{id, payload, context, audit_trail, errors}`. |
-| `Context` | Holds the three context roots (`data`, `metadata`, `temp_data`) with `get`, `set`, and `remove` by `Path`. |
+| `Context` | Holds the three context roots (`data`, `metadata`, `temp_data`) with `get`, `set`, and `remove` by `Path`; `take_data()` moves the `data` root out, leaving `{}`. |
 | `AuditEntry`, `Change`, `AuditMode` | Task audit record, field change record, and retention mode (`Full`, `Last(n)`, `Off`). |
 | `ErrorRecord` | Structured error record stored in `message.errors()`. |
 | `CancelToken` | Cooperative cancellation token (`child()` creates a linked child token). |

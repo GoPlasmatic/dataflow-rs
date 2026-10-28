@@ -1,6 +1,6 @@
 //! Write destinations.
 
-use super::config::{CompileCx, ConfigField, FieldKind, Resolver, Visit};
+use super::config::{CompileCx, ConfigField, FieldKind, OutputOverride, Resolver, Visit};
 use super::expr::Expr;
 use super::path::Path;
 use crate::base::Result;
@@ -39,7 +39,18 @@ impl ConfigField for Output {
     }
     /// The destination's dotted text, computed for this call when it is not
     /// literal.
+    ///
+    /// A resolver that supplies the callee's primary output answers before
+    /// the expression is evaluated, so a computed destination that yields
+    /// `null` need not fail an input a layer only reads
+    /// ([`Ctx::input_with_primary_output`](crate::Ctx::input_with_primary_output)).
     fn resolve(&self, r: &mut dyn Resolver) -> Result<Option<OwnedDataValue>> {
+        if let Some(supplied) = r.output_override(self) {
+            return Ok(match supplied {
+                OutputOverride::Omit => None,
+                OutputOverride::Value(value) => Some(value),
+            });
+        }
         r.eval(&self.0).map(Some)
     }
     fn kind() -> FieldKind {

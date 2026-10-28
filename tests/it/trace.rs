@@ -1794,3 +1794,33 @@ async fn a_trace_without_changes_has_no_mapping_ends() {
     assert_eq!(ends(&cut), [vec![1, 2], vec![]]);
     assert!(cut.steps[1].changes.is_empty());
 }
+
+/// A trace owns its snapshots: taking the message's `data` after the run
+/// leaves every context the trace replays exactly as it was.
+#[tokio::test]
+async fn taking_the_data_after_a_run_leaves_the_traces_contexts() {
+    let e = engine(&[workflow(
+        "w",
+        vec![map("rows", "data.rows", json!([1, 2]))],
+        &[],
+    )]);
+    let mut m = message(json!({"kept": true}));
+    let (_, trace) = trace_of(&e, &mut m, TraceOptions::default()).await;
+    let before: Vec<OwnedDataValue> = trace.contexts().map(|c| c.as_value().clone()).collect();
+
+    let taken = m.context_mut().take_data();
+    assert_eq!(
+        taken,
+        OwnedDataValue::from(&json!({"kept": true, "rows": [1, 2]}))
+    );
+    assert_eq!(m.context().data(), &OwnedDataValue::Object(Vec::new()));
+
+    let after: Vec<OwnedDataValue> = trace.contexts().map(|c| c.as_value().clone()).collect();
+    assert_eq!(before, after);
+    assert_eq!(
+        after.last().map(|root| &root["data"]),
+        Some(&OwnedDataValue::from(
+            &json!({"kept": true, "rows": [1, 2]})
+        ))
+    );
+}

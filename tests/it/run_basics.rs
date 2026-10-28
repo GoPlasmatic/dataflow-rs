@@ -8,7 +8,7 @@ use dataflow_rs::function::{FunctionConfig, FunctionSpec, Reference};
 use dataflow_rs::program::{CompileOptions, IssueCode, ResourceOracle, Severity};
 use dataflow_rs::run::{AuditMode, EngineConfig, RunStatus, Selection, WorkflowExit};
 use dataflow_rs::{
-    Ctx, Engine, ErrorKind, Expr, Function, Message, Outcome, Result, Run, RunOptions,
+    Ctx, Engine, ErrorKind, Expr, Function, Message, Outcome, Path, Result, Run, RunOptions,
 };
 use datavalue::OwnedDataValue;
 use serde_json::{Value, json};
@@ -1379,4 +1379,40 @@ async fn task_budget_and_run_accountant_enforce_dispatch_limits_and_occupancy() 
     assert_eq!(acc2.active.load(Ordering::SeqCst), 0);
     assert_eq!(acc2.drops.load(Ordering::SeqCst), 2);
     assert_eq!(acc2.custom.lock().unwrap().len(), 1);
+}
+
+/// A completed child run's `data` crosses into its parent without a copy:
+/// `Context::take_data` moves the tree, leaves the child's roots as objects,
+/// and the parent can write the owned value where it belongs.
+#[tokio::test]
+async fn a_childs_data_is_taken_into_the_parent() {
+    let child_workflow = workflow(
+        "child",
+        &[],
+        vec![map("rows", "data.rows", json!([{"id": 1}, {"id": 2}]))],
+    );
+    let child_engine = engine(&[child_workflow]);
+    let mut child = message(json!({"kept": true}));
+    let run = child_engine.run(&mut child).await;
+    assert!(matches!(run.status(), RunStatus::Completed), "{run:?}");
+
+    let metadata = child.context().metadata().clone();
+    let data = child.context_mut().take_data();
+    // The child keeps its three-root shape; the result is the parent's now,
+    // and the other two roots are untouched.
+    assert_eq!(child.context().data(), &OwnedDataValue::Object(Vec::new()));
+    assert_eq!(child.context().metadata(), &metadata);
+    assert_eq!(
+        child.context().temp_data(),
+        &OwnedDataValue::Object(Vec::new())
+    );
+    assert_eq!(child.to_json()["context"]["data"], json!({}));
+
+    let mut parent = message(json!({"caller": true}));
+    let output: Path = "data.child".parse().unwrap();
+    parent.context_mut().set(&output, data).unwrap();
+    assert_eq!(
+        json_of(&parent)["context"]["data"],
+        json!({"caller": true, "child": {"kept": true, "rows": [{"id": 1}, {"id": 2}]}})
+    );
 }

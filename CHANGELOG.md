@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Layer-owned primary output resolution (#83)**: `Ctx::input_without_primary_output`
+  and `Ctx::input_with_primary_output(&Path)` resolve a call's redacted input
+  with the callee's primary output left out, or set to a path the caller
+  resolved itself, without evaluating the output's expression. A `CallLayer`
+  that owns the destination policy (a computed `null` falling back to `data`,
+  for example) can log the call and answer it without a second, stricter
+  resolution. `Ctx::input()` is unchanged and stays strict, and the rest of
+  the input is resolved and redacted as before.
+- **Owned data extraction (#82)**: `Context::take_data` moves the `data` root
+  out of a completed message, leaving `{}` so the context keeps its three-root
+  shape, and leaves `metadata` and `temp_data` untouched. A child run's result
+  crosses into its parent without a deep clone of the tree.
+
 ## [4.0.1] — 2026-10-22
 
 ### Added

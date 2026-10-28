@@ -4,6 +4,7 @@
 use super::document::Interpolated;
 use super::engine::ExprEngine;
 use super::expr::{Expr, FromValue, ResolveExpr};
+use super::output::Output;
 use crate::base::typo::unknown_key;
 use crate::base::{AuthoredPath, ErrorKind, Issue, IssueCode, PathSeg, Result, Severity, StepKind};
 use datavalue::{NumberValue, OwnedDataValue};
@@ -325,6 +326,24 @@ pub(crate) mod sealed {
     pub trait Sealed {}
 }
 
+/// What a [`Resolver`] supplies for a config's primary output in place of
+/// evaluating it.
+///
+/// A call's context answers this only when its input is resolved with the
+/// destination already known
+/// ([`Ctx::input_with_primary_output`](crate::Ctx::input_with_primary_output)
+/// and [`Ctx::input_without_primary_output`](crate::Ctx::input_without_primary_output));
+/// every other resolution, [`Ctx::input`](crate::Ctx::input) included, leaves
+/// every output to resolve as usual.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum OutputOverride {
+    /// The field is left out, as an optional output the input left unset is.
+    Omit,
+    /// The field resolves to this value, its expression never evaluated.
+    Value(OwnedDataValue),
+}
+
 /// What resolving a config needs from a call: an expression evaluated, and
 /// a document rendered, each to an owned value, against the context the call
 /// sees. A [`ConfigField`] calls it from [`ConfigField::resolve`]; a call's
@@ -369,6 +388,19 @@ pub trait Resolver: sealed::Sealed {
     /// None from a call's context, which is every resolver there is today;
     /// the `Result` leaves room for one that may refuse.
     fn render(&mut self, doc: &Interpolated) -> Result<OwnedDataValue>;
+
+    /// The value `out` resolves to in place of being evaluated, when this
+    /// resolution supplies the callee's primary output: `None` resolves it
+    /// as usual, as every resolver does but the two input methods that
+    /// supply it.
+    ///
+    /// Only the [`Output`] a config's
+    /// [`primary_output`](crate::function::FunctionConfig::primary_output)
+    /// lends is answered; every other output, a nested one included, is
+    /// resolved as usual.
+    fn output_override(&mut self, _out: &Output) -> Option<OutputOverride> {
+        None
+    }
 }
 
 /// A type a config is made of.

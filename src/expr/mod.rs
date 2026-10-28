@@ -18,7 +18,8 @@ mod walk;
 
 pub(crate) use config::sealed::Sealed as SealedResolver;
 pub use config::{
-    CompileCx, ConfigField, ExprVisitor, FieldKind, FieldSpec, Resolver, ValueKind, Visit,
+    CompileCx, ConfigField, ExprVisitor, FieldKind, FieldSpec, OutputOverride, Resolver, ValueKind,
+    Visit,
 };
 pub(crate) use document::Filled;
 pub use document::{Interpolated, Rendered};
